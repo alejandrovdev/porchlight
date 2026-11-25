@@ -15,10 +15,12 @@ def prerequisites(checks):
     return Screen(answers.PREREQUISITES, "--yes", lambda given: Summary("Prerequisites", body))
 
 
-def terminal(apps, asked=lambda given: True):
-    """The terminal apps porchlight supports, each marked installed or not; asked only when
-    `asked(answers so far)`."""
+def terminal(apps, asked=lambda given: True, none=False):
+    """The terminal apps porchlight supports, each marked installed or not, and with `none`
+    the choice of no terminal; asked only when `asked(answers so far)`."""
     items = tuple(Item(app.name, app.title, "installed" if app.installed() else "not installed") for app in apps)
+    if none:
+        items += (Item(answers.NO_TERMINAL, "None", "no tab opens: sessions run hidden"),)
 
     def make(given):
         return Choice.of("Terminal", items, given.get(answers.TERMINAL)) if asked(given) else None

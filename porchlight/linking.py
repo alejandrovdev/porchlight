@@ -97,7 +97,9 @@ def setup(chosen, configuration, mac, out, asker):
     }
     steps = [
         screens.prerequisites(doctor.prerequisites(mac)),
-        screens.terminal([mac.terminal_app(name) for name in config.TERMINALS]),
+        screens.terminal(
+            [mac.terminal_app(name) for name in config.TERMINALS], none=not answers.terminal_needed(configuration)
+        ),
         screens.permission_mode("Default permission mode", modes),
         screens.features("Default features"),
         screens.keep_awake(lambda given: answers.needs_keep_awake(configuration, given)),

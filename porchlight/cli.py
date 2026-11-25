@@ -30,7 +30,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__, agents, config, doctor, linking, names, passes, service, ui
+from . import __version__, agents, answers, config, doctor, linking, names, passes, service, ui
 from .atoms import logs, tools
 from .features import live_view, ready_sessions, resume_list
 from .features import server as project_server
@@ -175,9 +175,9 @@ def parser():
         added.set_defaults(run=run, configured=configured, usage=added.format_usage, prog=added.prog)
         return added
 
-    def answered(added, features=True):
+    def answered(added, features=True, terminals=config.TERMINALS, terminal_help="the terminal app tabs open in"):
         """The flags that answer the screens of `setup` and `init`."""
-        added.add_argument("--terminal", choices=config.TERMINALS, help="the terminal app tabs open in")
+        added.add_argument("--terminal", choices=terminals, help=terminal_help)
         added.add_argument("--permission-mode", metavar="<mode>", help="one of the modes `claude --help` lists")
         if features:
             chosen = added.add_mutually_exclusive_group()
@@ -207,9 +207,11 @@ def parser():
             setup,
             "Set up this Mac once: terminal and project defaults.",
             details="Set up porchlight on this Mac once: check what the features need, choose the terminal tabs "
-            "open in, the permission mode and features new projects start from, and whether keep-awake holds "
-            "the Mac awake on battery too. Installs nothing.",
-        )
+            "open in (or none), the permission mode and features new projects start from, and whether keep-awake "
+            "holds the Mac awake on battery too. Installs nothing.",
+        ),
+        terminals=config.TERMINALS + (answers.NO_TERMINAL,),
+        terminal_help="the terminal app tabs open in, or none: no tab opens",
     )
     setting_up.add_argument(
         "--keep-awake",

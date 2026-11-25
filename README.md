@@ -95,7 +95,9 @@ With the `server` feature on, you can also create new sessions on this Mac from 
 
 1. **Prerequisites**: Claude Code, git, tmux and each supported terminal app, each marked
    `ok` or `missing` with what to do about it. Nothing is installed from here.
-2. **Terminal**: the app tabs open in (Warp), marked installed or not installed.
+2. **Terminal**: the app tabs open in (Warp), marked installed or not installed, or
+   `None`: no tab opens and sessions run hidden. `None` is offered only while no linked
+   project has `tabs`; a project linked later with `tabs` asks for a terminal.
 3. **Default permission mode**: one of the modes your installed `claude --help` lists. When
    they cannot be read, you type one.
 4. **Default features**: a checklist of the [features](#features-and-presets). Turning one
@@ -194,7 +196,8 @@ is 1: run `deinit` again.
 
 `setup` changes the terminal and the `[defaults]` that new projects start from; linked
 projects keep their own values. It takes the same flags as `init`, except `--name` and
-`--base`:
+`--base`; its `--terminal` also takes `none`, which leaves `terminal` out of the
+configuration:
 
 ```sh
 porchlight setup --terminal warp --permission-mode plan --preset recommended --yes
@@ -379,7 +382,7 @@ features = ["server", "resume-list"]
 
 | Key | Type | Rules |
 | --- | --- | --- |
-| `terminal` | text | The app tabs open in. Only `"warp"` today. Required when any project has `tabs`. |
+| `terminal` | text | The app tabs open in. Only `"warp"` today. Required when any project has `tabs`; left out when `setup` is answered `None`. |
 | `keep_awake` | text | Optional. When `keep-awake` holds the Mac awake: `"always"` (the default: on AC power and on battery) or `"plugged-in"` (on AC power only). One setting for the Mac. |
 | `[defaults]` | table | Optional. What `init` starts from for a new project. |
 | `[projects.<name>]` | table | One per project. |
