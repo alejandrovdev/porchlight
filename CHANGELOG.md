@@ -5,6 +5,10 @@ major version is 0, a minor release may change commands or the configuration fil
 
 ## [Unreleased]
 
+### Added
+
+- The MIT License; the repository and its Homebrew tap are public.
+
 ## [0.1.4] - 2026-11-25
 
 ### Added

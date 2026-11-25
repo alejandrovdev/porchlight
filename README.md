@@ -3,9 +3,9 @@
 Leave a light on for your phone: porchlight keeps Claude Code sessions ready on your Mac so
 you can start, follow and close them from the Claude mobile app.
 
-> **Status: in development.** The repository and its Homebrew tap are private for now:
-> `brew install` works only for a GitHub account with access to both. Commands and files
-> may still change before the first public release.
+> **Status: early.** porchlight works and is used every day, but while its version starts
+> with 0, commands and the configuration file may still change between minor releases (see
+> the [changelog](CHANGELOG.md)).
 
 ![porchlight setup: the lantern, the steps, the features panel and the details of the option under the cursor](docs/images/setup.png)
 
@@ -15,7 +15,8 @@ Contents: [The problem it solves](#the-problem-it-solves) ·
 [How it works](#how-it-works) · [Features and presets](#features-and-presets) ·
 [Configuration](#configuration) · [Commands](#commands) ·
 [Running and stopping](#running-and-stopping) · [Security and privacy](#security-and-privacy) ·
-[Troubleshooting](#troubleshooting) · [Uninstall](#uninstall) · [Development](#development)
+[Troubleshooting](#troubleshooting) · [Uninstall](#uninstall) · [Development](#development) ·
+[License](#license)
 
 ## The problem it solves
 
@@ -59,9 +60,6 @@ porchlight --version
 
 The tap is `alejandrovdev/porchlight`. Installing adds the `porchlight` command; nothing
 runs in the background until you link a folder with `porchlight init`.
-
-While the repositories are private, Homebrew downloads them with `git`, which uses your
-own GitHub credentials (for example `gh auth setup-git`).
 
 ## Quick start
 
@@ -654,3 +652,7 @@ starts, with folders and files made absolute. The rehearsal is still real where 
 `start` load agents into your launchd under the label you chose, and its sessions use your
 Claude Code account and the repository you link. End it with
 `porchlight uninstall --servers --purge` under the same variables.
+
+## License
+
+porchlight is released under the [MIT License](LICENSE).
