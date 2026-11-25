@@ -85,6 +85,20 @@ class Decisions(unittest.TestCase):
         self.assertEqual(self.decide(SERVER, True, "other", True, False)[0].why, agents.CHANGED)
         self.assertEqual(self.decide(SERVER, False, "same", True, False)[0].why, agents.UNWANTED)
 
+    def test_servers_may_name_the_projects_or_the_labels_whose_running_server_may_change(self):
+        unwanted = agents.Agent(SHOP, SERVER, None, "shop")
+        changed = agents.Agent(SHOP, SERVER, self.SAME, "shop")
+
+        def verbs(agent, servers):
+            return [action.verb for action in agents.decide([agent], {SHOP: self.OTHER}, {SHOP}, servers)]
+
+        for servers in (["shop"], {SHOP}, ("blog", "shop")):
+            self.assertEqual(verbs(unwanted, servers), [REMOVE], servers)
+            self.assertEqual(verbs(changed, servers), [RESTART], servers)
+        for servers in (["blog"], (), None, False):
+            self.assertEqual(verbs(unwanted, servers), [LEAVE], servers)
+            self.assertEqual(verbs(changed, servers), [LEAVE], servers)
+
     def test_a_file_that_cannot_be_read_counts_as_changed(self):
         agent = agents.Agent("one", SERVICE, self.SAME)
 
@@ -334,6 +348,45 @@ class Apply(OnTheMac):
             ],
         )
 
+    def test_servers_may_name_the_projects_whose_running_server_it_may_restart_or_remove(self):
+        self.apply(self.both)
+        self.mac.found["tmux"] = "/elsewhere/bin/tmux"  # every definition changes
+        self.mac.launchctl.calls.clear()
+
+        self.assertEqual(self.apply(self.configuration(shop=("server",)), servers=["blog"]), 0)
+
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL), ("load", SERVICE_LABEL), ("unload", BLOG)])
+        self.assertEqual(self.files(), [SERVICE_LABEL + ".plist", SHOP + ".plist"])
+        self.assertEqual(
+            self.printed[1:],
+            [
+                SHOP + ": left running as it is, though its definition changed",
+                BLOG + ": unloaded and removed",
+                "A running server is restarted or removed only when asked, because the app cannot start its "
+                "sessions again. To include them (shop): porchlight apply --servers",
+                CHECK,
+            ],
+        )
+
+    def test_servers_may_name_them_by_their_labels_too(self):
+        self.apply(self.both)
+        self.mac.found["tmux"] = "/elsewhere/bin/tmux"
+        self.mac.launchctl.calls.clear()
+
+        self.assertEqual(self.apply(self.both, servers=(SHOP,)), 0)
+
+        self.assertIn(("load", SHOP), self.mac.launchctl.did())
+        self.assertNotIn(("unload", BLOG), self.mac.launchctl.did())
+
+    def test_naming_no_project_protects_every_running_server(self):
+        self.apply(self.both)
+        self.mac.launchctl.calls.clear()
+
+        self.assertEqual(self.apply(self.configuration(), servers=[]), 0)
+
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL)])
+        self.assertEqual(self.mac.launchctl.loaded, {SHOP, BLOG})
+
     def test_a_server_that_is_not_loaded_is_loaded_with_its_new_definition_without_the_flag(self):
         self.apply(self.both)
         self.mac.launchctl.loaded.discard(SHOP)
@@ -372,7 +425,7 @@ class Apply(OnTheMac):
     def test_without_a_project_and_without_an_agent_it_says_how_to_add_a_project(self):
         self.assertEqual(self.apply(config.Config()), 0)
 
-        self.assertEqual(self.printed, ["No project is configured. Add one with: porchlight setup", CHECK])
+        self.assertEqual(self.printed, ["No project is configured. Add one from its folder with: porchlight init", CHECK])
         self.assertEqual(self.files(), [])
         self.assertEqual(self.mac.launchctl.did(), [])
 
@@ -625,7 +678,8 @@ class Uninstall(OnTheMac):
             [
                 SERVICE_LABEL + ": unloaded and removed",
                 SHOP + ": left running",
-                "No session is running.",
+                "No ready session and no session in use is running. A server left running keeps the sessions it "
+                "started.",
                 "A running server is removed only when asked, because the app cannot start its sessions again. "
                 "To remove them (shop): porchlight uninstall --servers",
                 "The configuration, the state and the logs were kept; porchlight uninstall --purge removes them.",

@@ -375,7 +375,7 @@ class Status(Scratch):
         code, printed = self.status()
 
         self.assertEqual(code, 0)
-        self.assertEqual(printed, ["No project is configured. Add one with: porchlight setup"])
+        self.assertEqual(printed, ["No project is configured. Add one from its folder with: porchlight init"])
 
     def test_says_when_a_projects_folder_is_missing_and_still_shows_the_next_project(self):
         shop, blog = self.project("shop", make=False), self.project("blog", features=("ready-session",))

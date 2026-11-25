@@ -34,6 +34,14 @@ def is_repository(git, directory):
     return answer.returncode == 0 and answer.stdout.strip() == "true"
 
 
+def top_level(git, directory):
+    """The top folder of the repository a folder is in, as git names it; None when the
+    folder is in none."""
+    answer = git(directory, "rev-parse", "--show-toplevel")
+    found = answer.stdout.strip() if answer.returncode == 0 else ""
+    return Path(found) if found else None
+
+
 def default_base(git, repository):
     """The default branch of the repository's origin, as git recorded it; None when it did not."""
     answer = git(repository, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")

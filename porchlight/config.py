@@ -1,8 +1,12 @@
 """The configuration file: the projects porchlight serves and the features of each.
 
-One TOML file that the setup writes and a person may edit by hand:
+One TOML file that `setup` and `init` write and a person may edit by hand:
 
     terminal = "warp"
+
+    [defaults]
+    permission_mode = "manual"
+    preset = "recommended"
 
     [projects.shop]
     path = "~/Projects/shop"
@@ -14,7 +18,8 @@ One TOML file that the setup writes and a person may edit by hand:
     permission_mode = "plan"
     features = ["server", "resume-list"]
 
-Reading it checks its shape only: types, names, and that each feature has the features it
+`[defaults]` is optional: what a new project starts from, with the same rules as a
+project's table, each value of it optional. Reading it checks its shape only: types, names, and that each feature has the features it
 builds on. Whether a folder exists or a tool is installed is for `doctor` to say.
 """
 
@@ -65,6 +70,7 @@ PROJECT_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
 PREFIX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,31}$")
 ONE_WORD = re.compile(r"^[A-Za-z]+$")
 PROJECT_KEYS = ("path", "permission_mode", "preset", "features", "base", "session_prefix")
+DEFAULTS_KEYS = ("permission_mode", "preset", "features")
 
 
 class ConfigError(Exception):
@@ -93,9 +99,18 @@ class Project:
 
 
 @dataclass(frozen=True)
+class Defaults:
+    """What a new project starts from; None where nothing was chosen."""
+
+    permission_mode: Optional[str] = None
+    features: Optional[tuple] = None
+
+
+@dataclass(frozen=True)
 class Config:
     terminal: Optional[str] = None
     projects: tuple = ()
+    defaults: Defaults = Defaults()
 
     def project(self, name):
         return next((project for project in self.projects if project.name == name), None)
@@ -199,6 +214,19 @@ def project_from(name, table, problems):
     return Project(name, path, mode, features, base, prefix or name)
 
 
+def defaults_from(table, problems):
+    key = "defaults"
+    if not isinstance(table, dict):
+        problems.append((key, "must be a table"))
+        return Defaults()
+    mode = text_value(key, table, "permission_mode", problems, ONE_WORD, "must be one word")
+    features = chosen_features(key, table, problems) if "preset" in table or "features" in table else None
+    for other in table:
+        if other not in DEFAULTS_KEYS:
+            problems.append(("%s.%s" % (key, other), "unknown key"))
+    return Defaults(mode, features)
+
+
 def parse(text):
     """The configuration a TOML text describes; ConfigError lists everything wrong with it."""
     try:
@@ -212,8 +240,9 @@ def parse(text):
     elif terminal is not None and terminal not in TERMINALS:
         problems.append(("terminal", 'unknown terminal "%s"; one of: %s' % (terminal, ", ".join(TERMINALS))))
     for key in data:
-        if key not in ("terminal", "projects"):
+        if key not in ("terminal", "defaults", "projects"):
             problems.append((key, "unknown key"))
+    defaults = defaults_from(data.get("defaults", {}), problems)
     tables = data.get("projects", {})
     if not isinstance(tables, dict):
         problems.append(("projects", "must be a table of projects"))
@@ -242,7 +271,7 @@ def parse(text):
                 break
     if problems:
         raise ConfigError(problems)
-    return Config(terminal, tuple(projects))
+    return Config(terminal, tuple(projects), defaults)
 
 
 def quoted(value):
@@ -250,11 +279,28 @@ def quoted(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def features_line(features):
+    """A set of features as a table states it: by its preset's name, else as a list."""
+    preset = next((name for name, chosen in PRESETS.items() if chosen == features), None)
+    if preset:
+        return "preset = %s" % quoted(preset)
+    return "features = [%s]" % ", ".join(quoted(name) for name in features)
+
+
 def dump(config):
     """The TOML text of a configuration; `parse` reads back the same configuration."""
     lines = []
     if config.terminal:
         lines.append("terminal = %s" % quoted(config.terminal))
+    defaults = config.defaults
+    if defaults.permission_mode is not None or defaults.features is not None:
+        if lines:
+            lines.append("")
+        lines.append("[defaults]")
+        if defaults.permission_mode is not None:
+            lines.append("permission_mode = %s" % quoted(defaults.permission_mode))
+        if defaults.features is not None:
+            lines.append(features_line(defaults.features))
     for project in config.projects:
         if lines:
             lines.append("")
@@ -265,11 +311,7 @@ def dump(config):
             lines.append("base = %s" % quoted(project.base))
         if project.prefix != project.name:
             lines.append("session_prefix = %s" % quoted(project.prefix))
-        preset = next((name for name, features in PRESETS.items() if features == project.features), None)
-        if preset:
-            lines.append("preset = %s" % quoted(preset))
-        else:
-            lines.append("features = [%s]" % ", ".join(quoted(name) for name in project.features))
+        lines.append(features_line(project.features))
     return "\n".join(lines) + "\n" if lines else ""
 
 

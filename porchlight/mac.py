@@ -35,6 +35,10 @@ class Mac:
     def tool(self, name):
         return tools.need(name, override=names.chosen(name, self.environ), path=self.environ.get("PATH"))
 
+    def terminal_app(self, name):
+        """The opener of a terminal app porchlight supports, to ask whether it is installed."""
+        return terminal.named(name)
+
     @cached_property
     def claude(self):
         return self.tool("claude")

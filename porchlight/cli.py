@@ -1,5 +1,8 @@
 """The command line: `porchlight <command>`.
 
+    setup                      once per Mac: the terminal and what new projects start from
+    init [folder]              link a project's folder, asking what it needs
+    deinit [folder]            unlink a project's folder
     status                     the sessions of every project
     reopen [name]              open a closed session again; without a name, list them
     doctor                     check what each project needs on this Mac
@@ -27,7 +30,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__, agents, config, doctor, names, passes, service
+from . import __version__, agents, config, doctor, linking, names, passes, service, ui
 from .atoms import logs, tools
 from .features import live_view, ready_sessions, resume_list
 from .features import server as project_server
@@ -72,6 +75,18 @@ def view(chosen, configuration, mac, out):
 
 def copies(chosen, configuration, mac, out):
     return resume_list.report(configuration, mac, out, sync_first=chosen.action == "sync")
+
+
+def setup(chosen, configuration, mac, out):
+    return linking.setup(chosen, configuration, mac, out, chosen.asker)
+
+
+def init(chosen, configuration, mac, out):
+    return linking.init(chosen, configuration, mac, out, chosen.asker)
+
+
+def deinit(chosen, configuration, mac, out):
+    return linking.deinit(chosen, configuration, mac, out, chosen.asker)
 
 
 def apply(chosen, configuration, mac, out):
@@ -147,15 +162,70 @@ def parser():
     top.add_argument("--version", action="store_true", help="print the version and exit")
     commands = top.add_subparsers(dest="command", metavar="<command>")
 
-    def command(name, run, summary, configured=True):
-        added = commands.add_parser(name, parents=[common], help=summary, description=summary)
-        added.set_defaults(run=run, configured=configured)
+    def command(name, run, summary, configured=True, details=""):
+        added = commands.add_parser(name, parents=[common], help=summary, description=details or summary)
+        added.set_defaults(run=run, configured=configured, usage=added.format_usage, prog=added.prog)
+        return added
+
+    def answered(added, features=True):
+        """The flags that answer the screens of `setup` and `init`."""
+        added.add_argument("--terminal", choices=config.TERMINALS, help="the terminal app tabs open in")
+        added.add_argument("--permission-mode", metavar="<mode>", help="one of the modes `claude --help` lists")
+        if features:
+            chosen = added.add_mutually_exclusive_group()
+            chosen.add_argument("--preset", choices=tuple(config.PRESETS), help="a preset of features")
+            chosen.add_argument(
+                "--feature",
+                action="append",
+                choices=tuple(config.FEATURES),
+                metavar="<feature>",
+                help="a feature, repeated for each one: %s" % ", ".join(config.FEATURES),
+            )
+        added.add_argument(
+            "--yes",
+            action="store_true",
+            help="take what each screen no flag answers starts from, and confirm; ask nothing else",
+        )
+        added.set_defaults(not_as_root=True)  # they load agents and write the person's files
         return added
 
     def with_servers(added, what):
         added.add_argument("--servers", action="store_true", help=what)
         return added
 
+    answered(
+        command(
+            "setup",
+            setup,
+            "Set up this Mac once: terminal and project defaults.",
+            details="Set up porchlight on this Mac once: check what the features need, choose the terminal tabs "
+            "open in, and the permission mode and features new projects start from. Installs nothing.",
+        )
+    )
+    linking_folder = answered(
+        command(
+            "init",
+            init,
+            "Link a project's folder, asking what it needs.",
+            details="Link a project's folder (a git repository, or a folder in one): choose its name, permission "
+            "mode and features, save it in the configuration and bring the agents up to date. A folder that is "
+            "linked already has its settings replaced.",
+        )
+    )
+    linking_folder.add_argument("folder", nargs="?", help="the project's folder (default: this one)")
+    linking_folder.add_argument("--name", metavar="<name>", help="the project's name")
+    linking_folder.add_argument("--base", metavar="<branch>", help="the branch new worktrees start from")
+    unlinking = command(
+        "deinit",
+        deinit,
+        "Unlink a project's folder; sessions in use stay.",
+        details="Unlink a project's folder: remove it from the configuration, end its free ready session, unload "
+        "and remove its server, and its state once nothing of it runs. Sessions in use keep running; the "
+        "worktrees and the logs stay. Other projects' running servers are left as they are.",
+    )
+    unlinking.add_argument("folder", nargs="?", help="the project's folder, or a folder in it (default: this one)")
+    unlinking.add_argument("--yes", action="store_true", help="end the sessions its server started without asking")
+    unlinking.set_defaults(not_as_root=True)
     command("status", status, "Print the sessions of every project.")
     reopening = command(
         "reopen", reopen, "Open a closed session again, back online in the app. Without a name, list the closed ones."
@@ -228,8 +298,9 @@ def load(path, out):
     return configuration
 
 
-def main(arguments, mac=None, out=print):
-    """Run one command; its exit code. `mac` stands in for the Mac and `out` for print."""
+def main(arguments, mac=None, out=print, asker=None):
+    """Run one command; its exit code. `mac` stands in for the Mac, `out` for print and
+    `asker` for the person at the terminal (`ui.Console`)."""
     reading = parser()
     try:
         chosen = reading.parse_args(arguments)
@@ -261,9 +332,14 @@ def main(arguments, mac=None, out=print):
     if configuration is None:
         return 1
     chosen.config_file = path
+    chosen.asker = asker or ui.Console()
     try:
         # What the Mac hands to a tab, a session or an agent reads this very file.
         return chosen.run(chosen, configuration, mac or Mac.of(configuration, config_file=path), out)
     except tools.ToolNotFound as error:
         out("%s. See what is missing with: %s" % (error, names.command("doctor")))
         return 1
+    except linking.Usage as error:
+        sys.stderr.write(chosen.usage())  # read now: the flags were added after the command
+        sys.stderr.write("%s: error: %s\n" % (chosen.prog, error))
+        return 2

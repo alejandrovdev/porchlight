@@ -35,7 +35,7 @@ def command(*words):
 
 def no_project():
     """What a command says when the configuration has no project."""
-    return "No project is configured. Add one with: " + command("setup")
+    return "No project is configured. Add one from its folder with: " + command("init")
 
 
 def variable(name):

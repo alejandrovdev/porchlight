@@ -258,7 +258,7 @@ class Report(Scratch):
     def test_without_a_project_says_so_and_how_to_add_one(self):
         self.assertEqual(self.report(), 0)
 
-        self.assertEqual(self.printed, ["No project is configured. Add one with: porchlight setup"])
+        self.assertEqual(self.printed, ["No project is configured. Add one from its folder with: porchlight init"])
 
 
 if __name__ == "__main__":

@@ -3,6 +3,8 @@ base branch and the permission mode.
 
     checks(project, mac)         the checks of one project, in the order they are printed
     report(configuration, mac)   print one line per check, under each project's name
+    prerequisites(mac)           what any project may need: the tools and each terminal app
+    listed_modes(mac)            the permission modes the installed Claude Code lists
 
 A project is asked only for what its features need: one without `ready-session` needs no
 tmux and no base branch, one without `tabs` no terminal. Nothing is changed and nothing is
@@ -68,6 +70,32 @@ def tool_check(name, mac, found):
     except tools.ToolNotFound:
         return Check(MISSING, label, INSTALL[name])
     return Check(OK, "%s at %s" % (label, found[name]))
+
+
+def app_check(app):
+    """Whether a terminal app porchlight supports is installed."""
+    if not app.installed():
+        return Check(MISSING, app.title, "install the %s app for the `tabs` feature, or leave that feature off" % app.title)
+    return Check(OK, "%s, a terminal tabs can open in" % app.title)
+
+
+def prerequisites(mac):
+    """What the features may need on this Mac, checked: every tool, then every terminal app
+    porchlight supports. Nothing is installed."""
+    found = {}
+    tools_needed = [name for name in config.TOOLS if name != TERMINAL]
+    results = [tool_check(name, mac, found) for name in tools_needed]
+    return results + [app_check(mac.terminal_app(name)) for name in config.TERMINALS]
+
+
+def listed_modes(mac):
+    """The permission modes the installed Claude Code lists; None when it is not installed
+    or its help does not say."""
+    try:
+        claude = mac.tool("claude")
+    except tools.ToolNotFound:
+        return None
+    return installed_modes(claude, mac)
 
 
 def terminal_check(mac):

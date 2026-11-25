@@ -11,7 +11,8 @@ exactly while the configuration has a project. Each project with the `server` fe
 an agent of its own (`porchlight server <project>`).
 
 A server that runs is never stopped, restarted or removed unless asked with `servers`: the
-app cannot start again the sessions that would end with it. Whatever else changes around
+app cannot start again the sessions that would end with it. `apply` takes `servers` as True
+or False for every server, or as the projects (or labels) whose server it may change. Whatever else changes around
 it, it is left as it is and said. A folder is served by one server: none is loaded into a
 folder that a server left running serves.
 
@@ -54,6 +55,9 @@ WHY_SERVERS_STAY = "because the app cannot start its sessions again."
 AS_ROOT = "Run this as the person who is logged in, without sudo: root has other agents. Nothing was changed."
 NOT_UNLOADED = "could not be unloaded, so it was left as it is"
 NOT_TOLD = "launchd could not say whether it was unloaded, so it was left as it is"
+KEPT_SERVERS_RUN = (
+    "No ready session and no session in use is running. A server left running keeps the sessions it started."
+)
 
 
 @dataclass(frozen=True)
@@ -114,18 +118,26 @@ def wanted(configuration, mac):
     return found
 
 
+def allowed(servers, agent):
+    """Whether a running server may be restarted or removed: `servers` is True or False for
+    every server, or names the projects (or the labels) whose server may be."""
+    if servers is None or isinstance(servers, bool):
+        return bool(servers)
+    return agent.project in servers or agent.label in servers
+
+
 def decide(agents, found, loaded, servers=False):
     """What to do with each agent, in the order given: a list of actions.
 
     `found` is the definition in each agent's file, by label (None for a file that cannot
-    be read), `loaded` the labels launchd has, and `servers` whether a running server may
-    be restarted or removed. An agent that is not wanted, has no file and is not loaded
-    gets no action.
+    be read), `loaded` the labels launchd has, and `servers` which running servers may be
+    restarted or removed (`allowed`). An agent that is not wanted, has no file and is not
+    loaded gets no action.
     """
     actions = []
     for agent in agents:
         is_loaded = agent.label in loaded
-        protected = agent.kind == SERVER and is_loaded and not servers
+        protected = agent.kind == SERVER and is_loaded and not allowed(servers, agent)
         if agent.definition is not None:
             if not is_loaded:
                 action = Action(agent, LOAD)
@@ -324,7 +336,7 @@ def held(action, actions, found, loaded, done, mac, out, servers):
         if other.verb == REMOVE and done[label]:
             continue  # gone: it serves nothing
         refused_as = "not loaded" if action.verb == LOAD else "not restarted"
-        if other.verb == LEAVE and not servers:
+        if other.verb == LEAVE and not allowed(servers, other.agent):
             hint = "; %s replaces it" % names.command("apply", "--servers")
             if theirs is None:
                 return "%s: %s is left running and its folder is not known%s" % (refused_as, label, hint)
@@ -337,7 +349,8 @@ def held(action, actions, found, loaded, done, mac, out, servers):
 
 def apply(configuration, mac, out=print, servers=False):
     """Make launchd match the configuration, one line per agent. 0 unless something failed
-    or was refused."""
+    or was refused. `servers`: which running servers may be restarted or removed, True or
+    False for all of them, or the projects (or labels) named."""
     code = refused(mac, out)
     if code:
         return code
@@ -480,32 +493,38 @@ def spoken(things):
     return things[0] if len(things) == 1 else "%s and %s" % (", ".join(things[:-1]), things[-1])
 
 
+def let_go_of(project, mac, out):
+    """End the free session a project holds, as a feature turned off ends it, and say so;
+    whether it went well. `project` may be only the name of one the configuration no longer
+    has: its folder is then the one the tool's state knows."""
+    name = getattr(project, "name", project)
+    try:
+        if isinstance(project, str):
+            project = ready_sessions.left_behind(project, mac)
+            if project is None:
+                return True  # no free session, or none whose folder is still there
+        if not names.repository(project).is_dir():
+            return True  # nothing can be tidied in a folder that is gone
+        ended, left = ready_sessions.let_go(project, mac)
+    except Exception as error:  # one project never stops the others
+        out("%s: its free session could not be ended: %r" % (name, error))
+        return False
+    if ended:
+        out("%s: ended %s it held" % (name, "the free session" if ended == 1 else "the %d free sessions" % ended))
+    if left:
+        out("%s: the free session it holds did not end" % name)
+        return False
+    return True
+
+
 def let_go_of_sessions(configuration, mac, out):
     """End the free session of every project of the configuration, and of every project
-    the tool's state still holds that the configuration no longer has, as a feature turned
-    off ends it; whether all went well."""
+    the tool's state still holds that the configuration no longer has; whether all went well."""
     well = True
     configured = {project.name for project in configuration.projects}
     removed = [name for name in mac.recorded_projects() if name not in configured]
     for project in list(configuration.projects) + removed:
-        name = getattr(project, "name", project)
-        try:
-            if isinstance(project, str):
-                project = ready_sessions.left_behind(project, mac)
-                if project is None:
-                    continue  # no free session, or none whose folder is still there
-            if not names.repository(project).is_dir():
-                continue  # nothing can be tidied in a folder that is gone
-            ended, left = ready_sessions.let_go(project, mac)
-        except Exception as error:  # one project never stops the others
-            out("%s: its free session could not be ended: %r" % (name, error))
-            well = False
-            continue
-        if ended:
-            out("%s: ended %s it held" % (name, "the free session" if ended == 1 else "the %d free sessions" % ended))
-        if left:
-            out("%s: the free session it holds did not end" % name)
-            well = False
+        well = let_go_of(project, mac, out) and well
     return well
 
 
@@ -533,6 +552,20 @@ def made_here(root, out):
     return False
 
 
+def forget_state(project, environ):
+    """Remove the files the tool keeps for one project in its state, one by one, and the
+    project's folder there once it is empty. Whoever calls it checked that the tool made
+    the state folder (`made_here`)."""
+    for kind in STATE_KINDS:
+        store = Store(names.state_file(project, kind, environ))
+        for file in (store.path, store.lock_path, store.path.with_suffix(".writing")):
+            forget(file)
+    settings = names.settings_file(project, environ)
+    for file in (settings, session_settings.waiting(settings), Path(str(settings) + ".writing")):
+        forget(file)
+    empty(names.project_state(project, environ))
+
+
 def erase(configuration, mac, out, config_file=None, readable=True):
     """Remove the configuration, the state and the logs, and say what was removed; whether
     all of it was. Only the files this tool makes, one by one, and each folder only once it
@@ -553,14 +586,7 @@ def erase(configuration, mac, out, config_file=None, readable=True):
     projects = [Named(name) for name in sorted(known)]
     if made_here(names.state_root(environ), out):
         for project in projects:
-            for kind in STATE_KINDS:
-                store = Store(names.state_file(project, kind, environ))
-                for file in (store.path, store.lock_path, store.path.with_suffix(".writing")):
-                    forget(file)
-            settings = names.settings_file(project, environ)
-            for file in (settings, session_settings.waiting(settings), Path(str(settings) + ".writing")):
-                forget(file)
-            empty(names.project_state(project, environ))
+            forget_state(project, environ)
         empty(names.state_root(environ) / "projects")
         forget(names.service_lock(environ))
         state.release(names.state_root(environ), names.MARKER)
@@ -633,7 +659,8 @@ def uninstall(configuration, mac, out=print, servers=False, purge=False, config_
         )
         code = 1
     if not used and not waiting:
-        out("No session is running.")
+        # What the state counts: a server left running may still run the sessions it started.
+        out(KEPT_SERVERS_RUN if kept else "No session is running.")
     if kept:
         out(
             "A running server is removed only when asked, %s To remove them (%s): %s"

@@ -208,6 +208,94 @@ features = ["server", "keep-awake"]
             self.assertEqual(config.load(Path(scratch) / "absent.toml"), config.parse(""))
 
 
+DEFAULTS = """
+terminal = "warp"
+
+[defaults]
+permission_mode = "plan"
+preset = "minimal"
+"""
+
+
+class Defaults(unittest.TestCase):
+    """The optional table `[defaults]`: what every new project starts from."""
+
+    def test_reads_a_permission_mode_and_a_preset(self):
+        parsed = config.parse(DEFAULTS)
+
+        self.assertEqual(parsed.defaults, config.Defaults("plan", ("server",)))
+        self.assertEqual(parsed.terminal, "warp", "the terminal stays a top-level key")
+
+    def test_reads_a_feature_list_in_the_order_of_the_feature_table(self):
+        parsed = config.parse(DEFAULTS.replace('preset = "minimal"', 'features = ["reopen", "ready-session"]'))
+
+        self.assertEqual(parsed.defaults.features, ("ready-session", "reopen"))
+
+    def test_a_file_without_the_table_has_no_defaults(self):
+        self.assertEqual(config.parse(ONE).defaults, config.Defaults())
+        self.assertEqual(config.Config().defaults, config.Defaults())
+        self.assertIsNone(config.Defaults().permission_mode)
+        self.assertIsNone(config.Defaults().features)
+
+    def test_each_value_of_the_table_may_be_left_out(self):
+        self.assertEqual(config.parse('[defaults]\npermission_mode = "plan"\n').defaults, config.Defaults("plan"))
+        self.assertEqual(
+            config.parse('[defaults]\npreset = "recommended"\n').defaults,
+            config.Defaults(None, tuple(config.FEATURES)),
+        )
+
+    def test_a_feature_list_must_have_what_each_feature_builds_on(self):
+        found = problems(DEFAULTS.replace('preset = "minimal"', 'features = ["tabs"]'))
+
+        self.assertEqual(found, [("defaults.features", '"tabs" needs "ready-session"')])
+
+    def test_features_are_given_once(self):
+        found = problems(DEFAULTS + 'features = ["server"]\n')
+
+        self.assertEqual(found, [("defaults", "give either preset or features, not both")])
+
+    def test_reports_an_unknown_key_inside_it_by_its_key(self):
+        found = problems(DEFAULTS + 'terminal = "warp"\ncolour = "blue"\n')
+
+        self.assertEqual(found, [("defaults.terminal", "unknown key"), ("defaults.colour", "unknown key")])
+
+    def test_reports_wrong_values_by_key(self):
+        found = problems('[defaults]\npermission_mode = "two words"\npreset = "everything"\n')
+
+        self.assertEqual(
+            found,
+            [
+                ("defaults.permission_mode", "must be one word"),
+                ("defaults.preset", 'unknown preset "everything"; one of: minimal, recommended'),
+            ],
+        )
+
+    def test_must_be_a_table(self):
+        self.assertEqual(problems('defaults = "plan"\n'), [("defaults", "must be a table")])
+
+    def test_dump_writes_it_before_the_projects_and_reads_back_the_same(self):
+        parsed = config.parse(DEFAULTS + ONE.replace('terminal = "warp"\n', ""))
+        written = config.dump(parsed)
+
+        self.assertLess(written.index("[defaults]"), written.index("[projects.shop]"))
+        self.assertLess(written.index('terminal = "warp"'), written.index("[defaults]"))
+        self.assertEqual(config.parse(written), parsed)
+
+    def test_dump_reads_back_the_same_for_every_shape_of_the_table(self):
+        shapes = (
+            config.Defaults(),
+            config.Defaults("plan"),
+            config.Defaults(None, ("server", "keep-awake")),
+            config.Defaults("acceptEdits", tuple(config.FEATURES)),
+        )
+        for defaults in shapes:
+            configuration = config.Config(None, (), defaults)
+            self.assertEqual(config.parse(config.dump(configuration)), configuration, defaults)
+
+    def test_dump_writes_no_table_when_nothing_is_set(self):
+        self.assertNotIn("[defaults]", config.dump(config.Config("warp")))
+
+
 class Features(unittest.TestCase):
     def test_each_feature_names_only_known_features_and_comes_after_them(self):
         seen = []

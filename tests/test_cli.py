@@ -100,10 +100,19 @@ class Basics(CommandLine):
         self.assertEqual(self.run_cli("--help", config_file=False), 0)
 
         text = "\n".join(self.printed)
-        listed = ("status", "reopen", "doctor", "view", "resume-list", "apply", "start", "stop", "uninstall", "run", "server")
-        for command in listed:
+        listed = ("setup", "init", "deinit", "status", "reopen", "doctor", "view", "resume-list", "apply", "start")
+        for command in listed + ("stop", "uninstall", "run", "server"):
             self.assertIn("\n    %s " % command, text)
-        self.assertNotIn("\n    setup ", text, "a command that does nothing yet is not listed")
+
+    def test_help_gives_setup_init_and_deinit_one_line_each(self):
+        self.assertEqual(self.run_cli("--help", config_file=False), 0)
+
+        lines = self.printed[0].splitlines() if len(self.printed) == 1 else self.printed
+        text = "\n".join(lines)
+        for command in ("setup", "init", "deinit"):
+            (line,) = [line for line in text.splitlines() if line.startswith("    %s " % command)]
+            following = text.splitlines()[text.splitlines().index(line) + 1]
+            self.assertTrue(following.startswith("    ") and not following.startswith("     "), following)
 
     def test_a_configuration_that_does_not_parse_prints_each_problem_by_key_and_exits_one(self):
         self.file.write_text('terminal = "kitty"\n[projects.shop]\npermission_mode = "plan"\npreset = "minimal"\n')
@@ -191,7 +200,7 @@ class Status(CommandLine):
     def test_without_a_project_says_how_to_add_one(self):
         self.assertEqual(self.run_cli("status"), 0, "a file that is not there is a configuration without projects")
 
-        self.assertEqual(self.printed, ["No project is configured. Add one with: porchlight setup"])
+        self.assertEqual(self.printed, ["No project is configured. Add one from its folder with: porchlight init"])
 
 
 class Reopen(CommandLine):
@@ -546,7 +555,7 @@ class Agents(CommandLine):
         with mock.patch.dict("os.environ", {"PORCHLIGHT_CONFIG": str(self.file)}):
             self.assertEqual(self.run_cli("apply", config_file=False), 0)
 
-        self.assertEqual(self.printed, ["No project is configured. Add one with: porchlight setup", CHECK])
+        self.assertEqual(self.printed, ["No project is configured. Add one from its folder with: porchlight init", CHECK])
 
     def broken_after_a_free_session(self):
         """An install whose configuration stopped parsing while a free session waits."""
