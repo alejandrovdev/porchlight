@@ -628,6 +628,14 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
   `tab closed by the user`. A view tab you closed is not opened again; open the view
   yourself with `porchlight view <project> <session>`.
 
+### A closed tab leaves the session listed in the app
+
+- Closing a session's tab ends the session on the Mac, but the app keeps it listed until you
+  archive it there: porchlight cannot archive a session from the Mac.
+- Unarchiving a session in the app reaches nothing on the Mac. To bring it back, ask a ready
+  session to reopen it by name (the `reopen` feature), or run `porchlight reopen <name>` on
+  the Mac.
+
 ### A session archived in the app keeps running
 
 - porchlight ends only the sessions it started (ready and reopened ones), never a session
