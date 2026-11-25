@@ -9,6 +9,7 @@ terminal tab shows.
                                  that is now in use, stop a session the app archived, tidy
                                  what ended
     status(project, mac)         print the sessions and their state
+    held(project, mac)           whether the state holds a session at all
     reopen(project, text, mac)   open a closed session again, back online in the app: in a
                                  new tab, or hidden for a project without tabs; without a
                                  name, list the closed ones
@@ -569,6 +570,11 @@ def left_behind(name, mac):
         return None
     (folder,) = folders
     return config.Project(name, str(folder), "", ()) if folder.is_dir() else None
+
+
+def held(project, mac):
+    """Whether the project's state holds a session, whatever its state."""
+    return bool(load_state(mac.store(project, STATE))["sessions"])
 
 
 def status(project, mac, out=print):

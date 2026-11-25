@@ -75,13 +75,18 @@ def watched(configuration, mac):
 
 
 def project_status(project, mac, out=print):
-    """A project's ready sessions, and the server's only when the project has the server."""
+    """A project's ready sessions when it has them, or still holds one from before they were
+    turned off, and the server's only when the project has the server."""
 
     def below(line):
         out("  " + line)
 
-    out("Ready sessions, with Claude Code's interface:")
-    ready_sessions.status(project, mac, below)
+    ready = project.has("ready-session") or ready_sessions.held(project, mac)
+    if ready:
+        out("Ready sessions, with Claude Code's interface:")
+        ready_sessions.status(project, mac, below)
+    if not ready and not project.has("server"):
+        out("No feature that starts sessions is on.")
     if project.has("server"):
         out("Sessions the server started, with a read-only view:")
         view_tabs.status(project, mac, below)

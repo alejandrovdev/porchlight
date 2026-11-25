@@ -371,6 +371,35 @@ class Status(Scratch):
         self.assertEqual(printed[9], "        /tools/tmux -L porchlight-test -u attach-session -t '=blog-aaaaaaaa'")
         self.assertEqual(len(printed), 10, "a project without the server has no server sessions to show")
 
+    def test_a_project_without_ready_sessions_has_no_heading_for_them(self):
+        shop = self.project("shop", features=("server",))
+
+        code, printed = self.status(shop)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            printed,
+            ["shop", "  Sessions the server started, with a read-only view:", "    No session the server started is running."],
+        )
+
+    def test_a_session_in_use_from_before_ready_sessions_were_turned_off_is_still_shown(self):
+        blog = self.project("blog", features=("server",))
+        self.ready_session(blog, A, "used", 301, prompt="Fix the footer")
+
+        code, printed = self.status(blog)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(printed[1], "  Ready sessions, with Claude Code's interface:")
+        self.assertRegex(printed[2], r"^    aaaaaaaa  used .* Fix the footer  \(pid 301, ")
+
+    def test_a_project_with_no_feature_that_starts_sessions_says_so(self):
+        quiet = self.project("quiet", features=("keep-awake",))
+
+        code, printed = self.status(quiet)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(printed, ["quiet", "  No feature that starts sessions is on."])
+
     def test_without_a_project_says_so_and_how_to_add_one(self):
         code, printed = self.status()
 
