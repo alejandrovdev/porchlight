@@ -21,10 +21,13 @@ the session ends. A pass removes it by the rule of a ready session's worktree
 (`ready_sessions.tidy_worktree`): only once no process runs its session and the worktree
 and its transcript have been quiet for a while, only when git lists it as a worktree of the
 repository, and only when it is clean and its HEAD is on the base branch; otherwise it is
-left, unlocked, and the project's log says why. Its branch is the server's and stays. Each
-worktree is checked once after its session ends, and again only when something in it or in
-the repository's branches changed. A folder of another name, a link, and anything unclear
-(a git error) are left alone.
+left, unlocked, and the project's log says why. A locked worktree is looked at only when
+Claude Code locked it (its reason starts with "claude ") and no process the reason names
+runs; any other lock leaves it as it is, still locked. Its branch is the server's and
+stays. Each worktree is checked once after its session ends, and again when something in
+it or in the repository's branches changed, or when the process that held its lock ended;
+the log says why a worktree is left only when that reason is new. A folder of another
+name, a link, and anything unclear (a git error) are left alone.
 """
 
 import os
@@ -32,12 +35,14 @@ import re
 from pathlib import Path
 
 from .. import names, session_settings
-from ..atoms import tools, transcripts, worktrees
+from ..atoms import processes, tools, transcripts, worktrees
 from . import live_view, ready_sessions
 
 WORKTREES = "server-worktrees"  # the state: each worktree checked, and how it looked then
 QUIET = 600  # seconds a worktree and its transcript stay unchanged before its session counts as ended
 BRIDGE = re.compile(re.escape(worktrees.SERVER_PREFIX) + live_view.SESSION.pattern)
+CLAUDE_LOCK = "claude "  # how Claude Code's own lock reasons start: "claude agent agent-<id> (pid N start ...)"
+LOCK_PID = re.compile(r"\bpid (\d+)")
 
 
 def command(project, claude, settings):
@@ -137,12 +142,32 @@ def worktree_look(path):
 
 
 def listed_worktrees(mac, repository):
-    """The folders git lists as worktrees of the repository; None when git cannot tell."""
+    """The folders git lists as worktrees of the repository, each with its lock: None when it
+    is not locked, else the lock's reason ("" for none). None when git cannot tell."""
     answer = mac.git(repository, "worktree", "list", "--porcelain")
     if answer.returncode != 0:
         return None
-    prefix = "worktree "
-    return {os.path.realpath(line[len(prefix) :]) for line in answer.stdout.splitlines() if line.startswith(prefix)}
+    found = {}
+    folder = None
+    for line in answer.stdout.splitlines():
+        if line.startswith("worktree "):
+            folder = os.path.realpath(line[len("worktree ") :])
+            found[folder] = None
+        elif folder is not None and (line == "locked" or line.startswith("locked ")):
+            found[folder] = line[len("locked ") :]
+    return found
+
+
+def lock_holders(lock, pids):
+    """What keeps a worktree locked, of the pids that run: None when nothing does (it is not
+    locked, or Claude Code locked it and no process its reason names runs); otherwise the
+    pids that hold it, [] for a lock that is not Claude Code's."""
+    if lock is None:
+        return None
+    if not lock.startswith(CLAUDE_LOCK):
+        return []
+    holders = sorted({int(pid) for pid in LOCK_PID.findall(lock)} & pids)
+    return holders or None
 
 
 def tidy_worktrees(project, mac):
@@ -155,31 +180,54 @@ def tidy_worktrees(project, mac):
     store = mac.store(project, WORKTREES)
     if not found and not store.path.exists():
         return
-    running = live_view.server_processes(mac.processes()) if found else {}
+    ps_text = mac.processes() if found else ""
+    running = live_view.server_processes(ps_text)
     ended = [path for name, path in found.items() if name[len(worktrees.SERVER_PREFIX) :] not in running]
     if not store.path.exists() and not any(quiet(path, mac) for path in ended):
         return  # nothing to check yet: nothing is kept
+    pids = {pid for pid, _, _ in processes.rows(ps_text)}
     with store.locked():
         state = store.load({})
         new = {name: state[name] for name in state if name in found}
         branches = branches_look(repository) if found else []
         due = []
         for name, path in sorted(found.items()):
+            seen = new.get(name) or {}
             if name[len(worktrees.SERVER_PREFIX) :] in running:
-                new.pop(name, None)  # checked again once it ends
-            elif quiet(path, mac) and (new.get(name) or {}).get("looks") != worktree_look(path) + branches:
+                new.pop(name, None)  # checked again once it ends; what was said of it stays
+                if seen.get("said"):
+                    new[name] = {"said": seen["said"]}
+            elif quiet(path, mac) and (
+                seen.get("looks") != worktree_look(path) + branches
+                or (seen.get("waits_for") and not set(seen["waits_for"]) & pids)  # its lock's process ended
+            ):
                 due.append((name, path))
         listed = listed_worktrees(mac, repository) if due else None
         for name, path in due if listed is not None else ():  # git could not tell: the next pass asks again
             real = os.path.realpath(path)
+            said = None  # why it is left
+            waits_for = lock_holders(listed.get(real), pids)  # the processes whose lock holds it
             if real not in listed or real == str(repository):
-                mac.log(project, "left %s: git does not list it as a worktree" % name)
+                said = "left %s: git does not list it as a worktree" % name
                 outcome = "not listed"
+            elif waits_for is not None:
+                said = "left %s: it is locked" % name + (" (%s)" % listed[real] if listed[real] else "")
+                outcome = "locked"
             else:
-                tidied = ready_sessions.tidy_worktree(project, path, mac)
+                lines = []
+                tidied = ready_sessions.tidy_worktree(project, path, mac, log=lines.append)
                 outcome = "gone" if tidied is None else tidied[0]
+                if outcome == "removed":
+                    for line in lines:
+                        mac.log(project, line)
+                elif lines:
+                    said = lines[-1]
             if path.is_dir():
-                new[name] = {"outcome": outcome, "looks": worktree_look(path) + branches_look(repository)}
+                if said is not None and said != (new.get(name) or {}).get("said"):
+                    mac.log(project, said)  # a reason already logged is not said again
+                new[name] = {"outcome": outcome, "looks": worktree_look(path) + branches_look(repository), "said": said}
+                if waits_for:
+                    new[name]["waits_for"] = waits_for
             else:
                 new.pop(name, None)
         if new != state:
