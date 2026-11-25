@@ -18,7 +18,9 @@ installs, in front of the person, after the last confirmation and before saving.
 
 `deinit` says everything it is about to do before it does it, asks only when sessions a
 server started would end, and removes that one server; the other projects' running servers
-are left as they are.
+are left as they are. The free session that waits ends, and its worktree is removed when
+nothing in it would be lost; the worktrees of sessions in use are left as they are, and so
+are the logs.
 """
 
 import os
@@ -292,7 +294,7 @@ def plan(project, remaining, loaded, files, live, used, mac):
     service = names.service_label(environ)
     lines = ['Unlinking "%s" (%s):' % (project.name, project.path), "  - it is removed from the configuration"]
     if project.has("ready-session"):
-        lines.append("  - its free ready session, if one waits, ends")
+        lines.append("  - its free ready session, if one waits, ends, and its worktree is removed when nothing in it would be lost")
     if label in loaded or label in files:
         line = "  - its server %s is unloaded and removed" % label
         if live:
@@ -305,7 +307,7 @@ def plan(project, remaining, loaded, files, live, used, mac):
         lines.append(
             '  - the session "%s" keeps running%s' % (ready_sessions.label(record, session), "; " + how if how else " in its terminal tab")
         )
-    lines.append("  - its worktrees in %s are left as they are" % worktrees.folder(names.repository(project)))
+    lines.append("  - the worktrees of its sessions in use in %s are left as they are" % worktrees.folder(names.repository(project)))
     return lines
 
 
@@ -335,6 +337,10 @@ def still_runs(project, mac):
 
 
 def deinit(chosen, configuration, mac, out, asker):
+    """Unlink the project of a folder: say the plan, then remove it from the configuration
+    and its server, end its free session (its worktree is removed when nothing in it would
+    be lost) and remove its state once nothing of it runs. Sessions in use keep running and
+    their worktrees stay, and so do the logs. 0 when all of it went well."""
     code = agents.refused(mac, out)
     if code:
         return code
@@ -366,7 +372,7 @@ def deinit(chosen, configuration, mac, out, asker):
     if not agents.let_go_of(project, mac, out):
         code = 1
     forget(project, mac, out)
-    out("Left as they are: its worktrees and its logs.")
+    out("Left as they are: the worktrees of its sessions in use, and its logs.")
     return code
 
 

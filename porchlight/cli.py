@@ -261,9 +261,10 @@ def parser():
         "deinit",
         deinit,
         "Unlink a project's folder; sessions in use stay.",
-        details="Unlink a project's folder: remove it from the configuration, end its free ready session, unload "
-        "and remove its server, and its state once nothing of it runs. Sessions in use keep running; the "
-        "worktrees and the logs stay. Other projects' running servers are left as they are.",
+        details="Unlink a project's folder: remove it from the configuration, end its free ready session, whose "
+        "worktree is removed when nothing in it would be lost, unload and remove its server, and its state once "
+        "nothing of it runs. Sessions in use keep running, and their worktrees and the logs stay. Other "
+        "projects' running servers are left as they are.",
     )
     unlinking.add_argument("folder", nargs="?", help="the project's folder, or a folder in it (default: this one)")
     unlinking.add_argument("--yes", action="store_true", help="end the sessions its server started without asking")
