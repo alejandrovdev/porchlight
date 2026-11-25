@@ -42,7 +42,7 @@ It serves one project or several, and each one runs only the features you turn o
   `ANTHROPIC_AUTH_TOKEN` set it stays off. When Claude Code is missing, `setup` can install
   it with Homebrew (`brew install --cask claude-code`); you still sign in by running
   `claude` once. Homebrew formulas cannot depend on casks, so the formula does not
-  install it.
+  install it. `claude --version` says which version you have.
 - The Claude mobile app, signed in to the same account.
 - git: the one in Apple's Command Line Tools or Homebrew's.
 - tmux and Python 3.11 or later. The Homebrew formula installs both.
@@ -71,12 +71,18 @@ own GitHub credentials (for example `gh auth setup-git`).
    porchlight setup
    ```
 
+   Keep the recommended features it starts with: the next steps need `ready-session` and
+   `tabs`.
+
 2. Link a project. Go to its folder (a git repository) and run `init`:
 
    ```sh
    cd ~/Projects/shop
    porchlight init
    ```
+
+   Then run `porchlight doctor`: each line should say `ok`. The service looks at every
+   project every 20 seconds, so the ready session follows within about half a minute.
 
 3. **On the phone**, open the Claude app. The ready session appears in your session list;
    its name starts with the project's name (`shop`). Write in it and work starts.
@@ -225,8 +231,8 @@ is 1: run `deinit` again.
 
 `setup` changes the terminal and the `[defaults]` that new projects start from; linked
 projects keep their own values. It takes the same flags as `init`, except `--name` and
-`--base`; its `--terminal` also takes `none`, which leaves `terminal` out of the
-configuration:
+`--base`, and also `--keep-awake always|plugged-in` and `--install-missing`; its
+`--terminal` also takes `none`, which leaves `terminal` out of the configuration:
 
 ```sh
 porchlight setup --terminal warp --permission-mode plan --preset recommended --yes
@@ -381,8 +387,8 @@ and exits with 1:
 
 ```text
 The configuration ~/Library/Application Support/porchlight/config.toml has problems:
-projects.blog.features: "resume-list" needs "server"
-projects.blog.colour: unknown key
+projects.notes.features: "resume-list" needs "server"
+projects.notes.colour: unknown key
 terminal: required by "tabs" of the project "shop"
 ```
 
@@ -407,7 +413,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 | Command | Flags | What it does |
 | --- | --- | --- |
 | `setup` | `--terminal warp\|apple-terminal\|none`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--install-missing`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
-| `init [folder]` | as `setup`, plus `--name <name>`, `--base <branch>` | Link a folder's repository as a project, or replace the settings of one already linked. |
+| `init [folder]` | `--terminal warp\|apple-terminal`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--name <name>`, `--base <branch>`, `--yes` | Link a folder's repository as a project, or replace the settings of one already linked. |
 | `deinit [folder]` | `--yes` | Unlink a project's folder; sessions in use stay. |
 | `status` | | Print the sessions of every project. |
 | `reopen [name]` | `--project <name>` | Open a closed session again, back online in the app. Without a name, list the closed ones. |
@@ -569,7 +575,8 @@ porchlight](docs/troubleshooting.md):
      refuses while a session or a server still runs. When it says that porchlight did not
      make a folder, it left that folder whole: look at what is in it and remove it yourself.
 
-   To remove everything at once: `porchlight uninstall --servers --purge`.
+   To remove everything at once, once no session runs (close the tabs of the sessions you
+   use first): `porchlight uninstall --servers --purge`.
 
 3. Remove the command and the tap. Do this after `porchlight uninstall`: the login agents
    run the installed command.

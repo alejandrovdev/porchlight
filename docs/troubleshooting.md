@@ -1,6 +1,7 @@
 # Troubleshooting porchlight
 
-Part of [porchlight](../README.md). Start with `porchlight doctor` and `porchlight status`; then find the symptom below.
+Part of [porchlight](../README.md): what `doctor`, `status` and the logs tell you, and the
+common problems with their fixes.
 
 Start with:
 
