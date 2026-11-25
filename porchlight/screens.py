@@ -3,16 +3,44 @@ command found (the checks, the terminal apps, the modes Claude Code lists) and f
 answers so far. Nothing is decided here: `answers` turns the answers into a configuration.
 """
 
-from . import answers, config
+from . import answers, config, doctor
 from .ui import Screen
 from .ui.widgets import Checklist, Choice, Confirm, Item, Summary, TextField
 
 FEATURE_FLAGS = "--preset or --feature"
 
 
-def prerequisites(checks):
-    body = tuple(check.line() for check in checks) + ("", "Nothing is installed from here: install what is missing yourself.")
+NOTHING_INSTALLED = "Nothing is installed from here: install what is missing yourself."
+WARNING = (
+    "Warning: porchlight can install what is missing with Homebrew on the next screen. It downloads software from "
+    "the internet, a cask may ask for your password, and Claude Code still needs you to sign in by running `claude`."
+)
+INSTALL_TITLE = "Install what is missing"
+
+
+def prerequisites(checks, installs=()):
+    """The checks, one line each; and a warning when the next screen offers to install
+    `installs` (the checks Homebrew installs), else that nothing is installed."""
+    body = tuple(check.line() for check in checks) + ("", WARNING if installs else NOTHING_INSTALLED)
     return Screen(answers.PREREQUISITES, "--yes", lambda given: Summary("Prerequisites", body))
+
+
+def install(installs):
+    """Whether to install what is missing with Homebrew (`installs`: the checks it installs);
+    asked only when there is something. It starts on Skip, and installs nothing itself."""
+    items = (
+        Item("yes", "Install with Homebrew", "; ".join(doctor.brew_command(check) for check in installs)),
+        Item("no", "Skip", "install them yourself; `porchlight doctor` lists them"),
+    )
+    values = [item.value for item in items]
+
+    def make(given):
+        if not installs:
+            return None
+        chosen = given.get(answers.INSTALL)
+        return Choice(INSTALL_TITLE, items, cursor=values.index(chosen) if chosen in values else values.index("no"))
+
+    return Screen(answers.INSTALL, "--install-missing", make)
 
 
 def terminal(apps, asked=lambda given: True, none=False):

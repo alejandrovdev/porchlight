@@ -32,8 +32,9 @@ It serves one project or several, and each one runs only the features you turn o
 ## Requirements
 
 - A Mac with [Homebrew](https://brew.sh).
-- Claude Code, installed on its own (porchlight does not install it), with `claude` in your
-  `PATH`, signed in with a plan that includes Remote Control.
+- Claude Code, with `claude` in your `PATH`, signed in with a plan that includes Remote
+  Control. When it is missing, `setup` can install it with Homebrew
+  (`brew install --cask claude-code`); you still sign in by running `claude` once.
 - The Claude mobile app, signed in to the same account.
 - git: the one in Apple's Command Line Tools or Homebrew's.
 - tmux and Python 3.11 or later. The Homebrew formula installs both.
@@ -95,7 +96,17 @@ With the `server` feature on, you can also create new sessions on this Mac from 
 ### What `setup` asks
 
 1. **Prerequisites**: Claude Code, git, tmux and each supported terminal app, each marked
-   `ok` or `missing` with what to do about it. Nothing is installed from here.
+   `ok` or `missing` with what to do about it. Nothing is installed from here. When Homebrew
+   is there and something it installs is missing (Claude Code, git, tmux or Warp), the
+   screen ends with a warning: the next screen can install them, which downloads software
+   from the internet, a cask may ask for your password, and Claude Code still needs you to
+   sign in by running `claude`.
+   - **Install what is missing**: asked only then. `Install with Homebrew` lists the
+     `brew install` commands it runs; `Skip` (where it starts) leaves them to you
+     (`porchlight doctor` lists them). Nothing is installed yet: the summary lists the
+     installs, and they run only after you answer `y` there, before the configuration is
+     saved, each with Homebrew's own output. A failed install is said, the others go on,
+     and `setup` exits with 1.
 2. **Terminal**: the app tabs open in (Warp, or Terminal), marked installed or not
    installed, or `None`: no tab opens and sessions run hidden. `None` is offered only while
    no linked project has `tabs`; a project linked later with `tabs` asks for a terminal.
@@ -123,6 +134,15 @@ Space turns a feature on or off, Esc goes back, `q` quits (Ctrl-C in a text fiel
 Otherwise they are numbered questions: type the number or the answer and press Enter, `<`
 goes back, `q` or Ctrl-C quits. Quitting, or answering no at the summary, changes nothing
 (exit code 1).
+
+In a terminal with 256 colors and UTF-8 that is at least 80 columns by 24 rows, every step
+is a whole screen: a status bar with a progress bar, the name in large pixels, the steps,
+the options in a panel with a bar under the cursor, and a panel about the option the
+cursor is on (what it does, what it needs and what needs it). From 112 columns by 32 rows
+an old porch lantern moves beside them and your answers so far are listed under the name.
+A smaller terminal gets plain lines: the title, the keys and the options. With fewer
+colors only the title and errors are colored. Set `NO_COLOR` to any value to draw plain
+lines without colors.
 
 ## Linking and unlinking folders
 
@@ -203,6 +223,16 @@ configuration:
 ```sh
 porchlight setup --terminal warp --permission-mode plan --preset recommended --yes
 ```
+
+`--yes` alone installs nothing. Add `--install-missing` to install what is missing with
+Homebrew, as the **Install what is missing** screen does:
+
+```sh
+porchlight setup --terminal warp --permission-mode plan --install-missing --yes
+```
+
+When nothing is missing it says so. When something is missing but Homebrew is not found,
+it says that nothing was installed and why, saves the rest, and exits with 1.
 
 When projects are already linked, it brings their agents up to date afterwards, as `apply`
 does.
@@ -466,7 +496,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 
 | Command | Flags | What it does |
 | --- | --- | --- |
-| `setup` | `--terminal warp\|apple-terminal\|none`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
+| `setup` | `--terminal warp\|apple-terminal\|none`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--install-missing`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
 | `init [folder]` | as `setup`, plus `--name <name>`, `--base <branch>` | Link a folder's repository as a project, or replace the settings of one already linked. |
 | `deinit [folder]` | `--yes` | Unlink a project's folder; sessions in use stay. |
 | `status` | | Print the sessions of every project. |

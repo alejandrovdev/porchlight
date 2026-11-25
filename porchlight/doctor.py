@@ -5,6 +5,8 @@ base branch, the permission mode and its server's agent.
     checks(project, mac)         the checks of one project's features, in the order they are printed
     report(configuration, mac)   print one line per check: this Mac's, then each project's under its name
     prerequisites(mac)           what any project may need: the tools and each terminal app
+    installable(checks)          the missing ones Homebrew installs
+    homebrew(mac)                where Homebrew's `brew` is, or None
     listed_modes(mac)            the permission modes the installed Claude Code lists
 
 A project is asked only for what its features need: one without `ready-session` needs no
@@ -26,8 +28,15 @@ from .features import ready_sessions
 OK, MISSING, PROBLEM, UNKNOWN = "ok", "missing", "problem", "unknown"
 TERMINAL = "terminal"  # as `config.tools` names it
 LABELS = {"claude": "Claude Code (claude)"}
+# What Homebrew installs each prerequisite with: the words after `brew`.
+BREW = {
+    "claude": ("install", "--cask", "claude-code"),
+    "git": ("install", "git"),
+    "tmux": ("install", "tmux"),
+    "warp": ("install", "--cask", "warp"),
+}
 INSTALL = {
-    "claude": "Claude Code is installed separately: install it, and have `claude` in PATH",
+    "claude": "install it with: brew install --cask claude-code, then sign in by running `claude`",
     "git": "install it with: brew install git",
     "tmux": "install it with: brew install tmux",
 }
@@ -42,6 +51,7 @@ class Check:
     state: str  # OK, MISSING, PROBLEM or UNKNOWN
     what: str
     advice: str = ""  # what to do about it
+    install: tuple = ()  # when it is missing and Homebrew has it: the words after `brew` that install it
 
     @property
     def failed(self):
@@ -75,14 +85,17 @@ def tool_check(name, mac, found):
     try:
         found[name] = mac.tool(name)
     except tools.ToolNotFound:
-        return Check(MISSING, label, INSTALL[name])
+        return Check(MISSING, label, INSTALL[name], BREW.get(name, ()))
     return Check(OK, "%s at %s" % (label, found[name]))
 
 
 def app_check(app):
     """Whether a terminal app porchlight supports is installed."""
     if not app.installed():
-        return Check(MISSING, app.title, "install the %s app for the `tabs` feature, or leave that feature off" % app.title)
+        words = BREW.get(app.name, ())
+        how = " with: %s" % " ".join(("brew",) + words) if words else ""
+        advice = "install the %s app for the `tabs` feature%s, or leave that feature off" % (app.title, how)
+        return Check(MISSING, app.title, advice, words)
     return Check(OK, "%s, a terminal tabs can open in" % app.title)
 
 
@@ -93,6 +106,24 @@ def prerequisites(mac):
     tools_needed = [name for name in config.TOOLS if name != TERMINAL]
     results = [tool_check(name, mac, found) for name in tools_needed]
     return results + [app_check(mac.terminal_app(name)) for name in config.TERMINALS]
+
+
+def installable(checks):
+    """The checks of what is missing that Homebrew installs, in their order."""
+    return [check for check in checks if check.failed and check.install]
+
+
+def brew_command(check):
+    """The command that installs what a check found missing, as the person would type it."""
+    return " ".join(("brew",) + check.install)
+
+
+def homebrew(mac):
+    """Where Homebrew's `brew` is, found the way the other tools are; None when it is not."""
+    try:
+        return mac.tool("brew")
+    except tools.ToolNotFound:
+        return None
 
 
 def listed_modes(mac):

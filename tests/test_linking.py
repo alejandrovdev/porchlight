@@ -9,10 +9,10 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-from porchlight import agents, cli, config, names
+from porchlight import agents, cli, config, linking, names
 from porchlight.atoms import worktrees
 from porchlight.features import ready_sessions
-from porchlight.ui.widgets import BACKSPACE, CTRL_C, DOWN, ENTER, SPACE, Choice, Confirm, TextField
+from porchlight.ui.widgets import BACKSPACE, CTRL_C, DOWN, ENTER, ESC, SPACE, UP, Choice, Confirm, TextField
 from tests import standins
 from tests.test_doctor import HELP, MODES
 
@@ -26,6 +26,14 @@ NEXT_READY = (
     "Next: on the phone, the ready session appears in the app's session list. See it here with: porchlight status"
 )
 NEXT_SERVER = "Next: on the phone, create a session on this Mac from the app. See it here with: porchlight status"
+NEXT_INIT = "Next: in a project's folder, run: porchlight init"
+NOTHING_INSTALLED = "Nothing is installed from here: install what is missing yourself."
+WARNING = (
+    "Warning: porchlight can install what is missing with Homebrew on the next screen. It downloads software from "
+    "the internet, a cask may ask for your password, and Claude Code still needs you to sign in by running `claude`."
+)
+INSTALL = "Install what is missing"
+SIGN_IN = "Sign in to Claude Code by running `claude` once."
 
 
 class Linking(unittest.TestCase):
@@ -320,6 +328,259 @@ class Setup(Linking):
 
             self.assertIn(problem, self.errors)
             self.assertEqual(keys.asked, 0)
+
+
+class InstallingWhatIsMissing(Linking):
+    def setUp(self):
+        super().setUp()
+        self.mac.found["brew"] = "/tools/brew"
+
+    def test_with_homebrew_and_something_missing_it_warns_and_offers_to_install_starting_on_skip(self):
+        del self.mac.found["tmux"]
+        self.mac.apps["warp"].is_installed = False
+        keys = standins.Keys(ENTER, "q")
+
+        self.assertEqual(self.run_cli("setup", keys=keys), 1)
+
+        self.assertEqual(keys.titles(), ["Prerequisites", INSTALL])
+        body = keys.last("Prerequisites").body
+        self.assertEqual(body[-2:], ("", WARNING))
+        self.assertNotIn(NOTHING_INSTALLED, body)
+        offer = keys.last(INSTALL)
+        self.assertIsInstance(offer, Choice)
+        self.assertEqual(
+            [(item.value, item.label, item.note) for item in offer.items],
+            [
+                ("yes", "Install with Homebrew", "brew install tmux; brew install --cask warp"),
+                ("no", "Skip", "install them yourself; `porchlight doctor` lists them"),
+            ],
+        )
+        self.assertEqual((offer.cursor, offer.current), (1, None), "it starts on Skip, marked as nothing saved")
+        self.assertEqual(self.mac.installs, [])
+        self.assertEqual(self.printed, ["Nothing was changed."])
+
+    def test_without_homebrew_or_with_nothing_missing_nothing_is_offered_and_the_body_is_as_before(self):
+        for missing, brew in ((True, False), (False, True)):
+            if missing:
+                del self.mac.found["tmux"]
+            else:
+                self.mac.found["tmux"] = "/tools/tmux"
+            if not brew:
+                del self.mac.found["brew"]
+            else:
+                self.mac.found["brew"] = "/tools/brew"
+            keys = standins.Keys(ENTER, "q")
+
+            self.run_cli("setup", keys=keys)
+
+            self.assertEqual(keys.titles(), ["Prerequisites", "Terminal"])
+            body = keys.last("Prerequisites").body
+            self.assertEqual(body[-2:], ("", NOTHING_INSTALLED))
+            self.assertNotIn(WARNING, body)
+
+    def test_install_is_listed_in_the_summary_and_runs_after_its_yes_before_saving(self):
+        del self.mac.found["tmux"]
+        self.mac.apps["warp"].is_installed = False
+        keys = standins.Keys(ENTER, UP, ENTER, ENTER, ENTER, ENTER, ENTER, "y")
+
+        self.assertEqual(self.run_cli("setup", keys=keys), 0)
+
+        self.assertEqual(
+            keys.titles(),
+            ["Prerequisites", INSTALL, "Terminal", "Default permission mode", "Default features", "Keep the Mac awake", "Summary"],
+        )
+        self.assertEqual(keys.last("Summary").body[-1], "Install with Homebrew: tmux, Warp")
+        self.assertEqual(self.mac.installs, [["/tools/brew", "install", "tmux"], ["/tools/brew", "install", "--cask", "warp"]])
+        self.assertEqual(
+            self.printed,
+            [
+                "Installing tmux: brew install tmux",
+                "Installing Warp: brew install --cask warp",
+                "Saved the configuration in %s." % self.file,
+                NEXT_INIT,
+            ],
+        )
+        self.assertEqual(self.saved().terminal, "warp")
+
+    def test_skip_installs_nothing_and_the_summary_does_not_list_it(self):
+        del self.mac.found["tmux"]
+        keys = standins.Keys(ENTER, ENTER, ENTER, ENTER, ENTER, ENTER, "y")
+
+        self.assertEqual(self.run_cli("setup", keys=keys), 0)
+
+        self.assertFalse([line for line in keys.last("Summary").body if line.startswith("Install with Homebrew")])
+        self.assertEqual(self.mac.installs, [])
+        self.assertEqual(self.printed, ["Saved the configuration in %s." % self.file, NEXT_INIT])
+
+    def test_the_final_no_or_quitting_after_choosing_to_install_installs_nothing(self):
+        del self.mac.found["tmux"]
+        for keys in (
+            standins.Keys(ENTER, UP, ENTER, ENTER, ENTER, ENTER, ENTER, "n"),
+            standins.Keys(ENTER, UP, ENTER, ENTER, "q"),
+        ):
+            self.printed.clear()
+
+            self.assertEqual(self.run_cli("setup", keys=keys), 1)
+
+            self.assertEqual(self.mac.installs, [])
+            self.assertEqual(self.printed, ["Nothing was changed."])
+            self.assertFalse(self.file.exists())
+
+    def test_yes_alone_installs_nothing(self):
+        del self.mac.found["tmux"]
+
+        self.assertEqual(self.run_cli("setup", "--terminal", "warp", "--permission-mode", "plan", "--yes"), 0)
+
+        self.assertEqual(self.keys.asked, 0)
+        self.assertEqual(self.mac.installs, [])
+        self.assertEqual(self.printed, ["Saved the configuration in %s." % self.file, NEXT_INIT])
+
+    def test_install_missing_with_yes_installs_reports_a_failure_goes_on_saves_and_exits_one(self):
+        del self.mac.found["claude"]
+        del self.mac.found["git"]
+        self.mac.install_codes["/tools/brew install git"] = 1
+
+        code = self.run_cli("setup", "--terminal", "warp", "--permission-mode", "plan", "--install-missing", "--yes")
+
+        self.assertEqual(code, 1)
+        self.assertEqual(self.keys.asked, 0)
+        self.assertEqual(
+            self.mac.installs,
+            [["/tools/brew", "install", "--cask", "claude-code"], ["/tools/brew", "install", "git"]],
+        )
+        self.assertEqual(
+            self.printed,
+            [
+                "Installing Claude Code (claude): brew install --cask claude-code",
+                SIGN_IN,
+                "Installing git: brew install git",
+                "Could not install git: brew exited 1.",
+                "Saved the configuration in %s." % self.file,
+                NEXT_INIT,
+            ],
+        )
+        self.assertEqual(self.saved().defaults.permission_mode, "plan")
+
+    def test_a_failed_claude_code_install_does_not_say_to_sign_in(self):
+        del self.mac.found["claude"]
+        self.mac.install_codes["/tools/brew install --cask claude-code"] = 7
+
+        code = self.run_cli("setup", "--terminal", "warp", "--permission-mode", "plan", "--install-missing", "--yes")
+
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            self.printed[:2],
+            ["Installing Claude Code (claude): brew install --cask claude-code", "Could not install Claude Code (claude): brew exited 7."],
+        )
+        self.assertNotIn(SIGN_IN, self.printed)
+
+    def test_the_install_missing_flag_answers_the_screen_and_the_summary_still_asks(self):
+        del self.mac.found["tmux"]
+        keys = standins.Keys(ENTER, ENTER, ENTER, ENTER, ENTER, "n")
+
+        self.assertEqual(self.run_cli("setup", "--install-missing", keys=keys), 1)
+
+        self.assertNotIn(INSTALL, keys.titles())
+        self.assertEqual(keys.last("Summary").body[-1], "Install with Homebrew: tmux")
+        self.assertEqual(self.mac.installs, [])
+
+    def test_with_projects_the_exit_code_is_applys_unless_an_install_failed(self):
+        self.configure(shop=("server",))
+        self.mac.apps["warp"].is_installed = False
+        arguments = ("setup", "--permission-mode", "plan", "--install-missing", "--yes")
+
+        self.assertEqual(self.run_cli(*arguments), 0)
+        self.assertEqual(self.mac.installs, [["/tools/brew", "install", "--cask", "warp"]])
+        self.assertEqual(self.printed[:2], ["Installing Warp: brew install --cask warp", "Saved the configuration in %s." % self.file])
+
+        self.mac.install_codes["/tools/brew install --cask warp"] = 1
+        self.printed.clear()
+
+        self.assertEqual(self.run_cli(*arguments), 1)
+        self.assertIn("Could not install Warp: brew exited 1.", self.printed)
+        self.assertIn("Saved the configuration in %s." % self.file, self.printed)
+
+
+class InstallingEdgeCases(Linking):
+    """The independent check's probes, kept: order, leaving on the way, and the flag that
+    cannot be honored."""
+
+    FLAGS = ("setup", "--terminal", "warp", "--permission-mode", "plan", "--install-missing", "--yes")
+
+    def setUp(self):
+        super().setUp()
+        self.mac.found["brew"] = "/tools/brew"
+
+    def all_missing(self):
+        for name in ("claude", "git", "tmux"):
+            del self.mac.found[name]
+        self.mac.apps["warp"].is_installed = False
+
+    def test_installs_all_four_in_order_with_their_exact_commands(self):
+        self.all_missing()
+
+        self.assertEqual(self.run_cli(*self.FLAGS), 0)
+
+        self.assertEqual(
+            self.mac.installs,
+            [
+                ["/tools/brew", "install", "--cask", "claude-code"],
+                ["/tools/brew", "install", "git"],
+                ["/tools/brew", "install", "tmux"],
+                ["/tools/brew", "install", "--cask", "warp"],
+            ],
+        )
+
+    def test_ctrl_c_on_the_install_screen_installs_and_writes_nothing(self):
+        self.all_missing()
+
+        code = self.run_cli("setup", keys=standins.Keys(ENTER, UP, CTRL_C))
+
+        self.assertEqual((code, self.printed, self.mac.installs), (1, ["Nothing was changed."], []))
+        self.assertFalse(self.file.exists())
+
+    def test_going_back_from_install_to_skip_installs_nothing(self):
+        del self.mac.found["tmux"]
+        keys = standins.Keys(ENTER, UP, ENTER, ESC, DOWN, ENTER, ENTER, ENTER, ENTER, ENTER, "y")
+
+        self.run_cli("setup", keys=keys)
+
+        self.assertEqual(self.mac.installs, [])
+        self.assertFalse(any("Homebrew" in line for line in keys.last("Summary").body))
+
+    def test_a_brew_that_cannot_start_is_reported_as_a_failure(self):
+        del self.mac.found["git"]
+        self.mac.install_codes["/tools/brew install git"] = 127
+
+        self.assertEqual(self.run_cli(*self.FLAGS), 1)
+
+        self.assertIn("Could not install git: brew exited 127.", self.printed)
+
+    def test_install_missing_without_homebrew_says_why_nothing_was_installed_and_exits_one(self):
+        del self.mac.found["brew"]
+        del self.mac.found["tmux"]
+
+        self.assertEqual(self.run_cli(*self.FLAGS), 1)
+
+        self.assertEqual(self.mac.installs, [])
+        self.assertEqual(self.printed[0], linking.NO_HOMEBREW % "tmux")
+        self.assertIn("Saved the configuration in %s." % self.file, self.printed)
+
+    def test_install_missing_with_nothing_missing_says_so(self):
+        self.assertEqual(self.run_cli(*self.FLAGS), 0)
+
+        self.assertEqual(self.mac.installs, [])
+        self.assertEqual(self.printed[0], linking.NOTHING_MISSING)
+
+
+class RunInView(unittest.TestCase):
+    def test_runs_a_program_with_the_terminal_and_gives_its_exit_code(self):
+        from porchlight.mac import Mac
+
+        mac = Mac()
+        self.assertEqual(mac.run_in_view(["/usr/bin/true"]), 0)
+        self.assertEqual(mac.run_in_view(["/usr/bin/false"]), 1)
+        self.assertEqual(mac.run_in_view([str(Path(tempfile.gettempdir()) / "no-such-program-here")]), 127)
 
 
 class Init(Linking):

@@ -12,6 +12,10 @@ still to answer when the input ends is a usage error that names its flag (`Usage
 the configuration is saved and the agents brought up to date the way `apply` does without
 `--servers`: a server that runs is left as it is.
 
+When Homebrew is there and a prerequisite it installs is missing, `setup` warns, asks
+whether to install them (`--install-missing` answers yes, `--yes` alone no), and runs the
+installs, in front of the person, after the last confirmation and before saving.
+
 `deinit` says everything it is about to do before it does it, asks only when sessions a
 server started would end, and removes that one server; the other projects' running servers
 are left as they are.
@@ -30,6 +34,9 @@ NEXT_INIT = "Next: in a project's folder, run: " + names.command("init")
 STATUS = "See it here with: " + names.command("status")
 NEXT_READY = "Next: on the phone, the ready session appears in the app's session list. " + STATUS
 NEXT_SERVER = "Next: on the phone, create a session on this Mac from the app. " + STATUS
+SIGN_IN = "Sign in to Claude Code by running `claude` once."
+NO_HOMEBREW = "Homebrew was not found, so nothing was installed (missing: %s): install Homebrew from https://brew.sh, or install them yourself."
+NOTHING_MISSING = "Nothing to install: every prerequisite is there."
 
 
 class Usage(Exception):
@@ -87,36 +94,67 @@ def saved(configuration, path, out):
     return True
 
 
+def installed(brew, installs, mac, out):
+    """Install each check's prerequisite with Homebrew, its output in view; a failure is
+    said and the rest go on. Whether every one was installed."""
+    every = True
+    for check in installs:
+        out("Installing %s: %s" % (check.what, doctor.brew_command(check)))
+        code = mac.run_in_view([brew] + list(check.install))
+        if code:
+            out("Could not install %s: brew exited %d." % (check.what, code))
+            every = False
+        elif check.install == doctor.BREW["claude"]:
+            out(SIGN_IN)
+    return every
+
+
 def setup(chosen, configuration, mac, out, asker):
     modes = doctor.listed_modes(mac)
+    checks = doctor.prerequisites(mac)
+    brew = doctor.homebrew(mac)
+    installs = doctor.installable(checks) if brew else []
+    labels = [check.what for check in installs]
     flags = {
+        answers.INSTALL: "yes" if chosen.install_missing else None,
         answers.TERMINAL: chosen.terminal,
         answers.MODE: given_mode(chosen, modes),
         answers.FEATURES: given_features(chosen),
         answers.KEEP_AWAKE: chosen.keep_awake,
     }
     steps = [
-        screens.prerequisites(doctor.prerequisites(mac)),
+        screens.prerequisites(checks, installs),
+        screens.install(installs),
         screens.terminal(
             [mac.terminal_app(name) for name in config.TERMINALS], none=not answers.terminal_needed(configuration)
         ),
         screens.permission_mode("Default permission mode", modes),
         screens.features("Default features"),
         screens.keep_awake(lambda given: answers.needs_keep_awake(configuration, given)),
-        screens.confirm("Save this configuration?", lambda given: answers.setup_summary(configuration, given)),
+        screens.confirm("Save this configuration?", lambda given: answers.setup_summary(configuration, given, labels)),
     ]
     got = asked(asker, steps, answers.setup_answers(configuration), flags, chosen.yes)
     if got is None:
         out(NOTHING)
         return 1
+    every = installed(brew, installs, mac, out) if got.get(answers.INSTALL) == "yes" else True
+    if chosen.install_missing and not installs:  # the flag asked for what cannot be done, or for nothing
+        missing = doctor.installable(checks)
+        if missing:
+            out(NO_HOMEBREW % ", ".join(check.what for check in missing))
+            every = False
+        else:
+            out(NOTHING_MISSING)
     configured = answers.with_setup(configuration, got)
     if not saved(configured, chosen.config_file, out):
         return 1
     out("Saved the configuration in %s." % chosen.config_file)
     if not configured.projects:
         out(NEXT_INIT)
-        return 0
-    return agents.apply(configured, mac, out)
+        code = 0
+    else:
+        code = agents.apply(configured, mac, out)
+    return code if every else 1
 
 
 def same_folder(one, other):
