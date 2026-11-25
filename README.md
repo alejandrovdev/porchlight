@@ -37,9 +37,9 @@ It serves one project or several, and each one runs only the features you turn o
 - The Claude mobile app, signed in to the same account.
 - git: the one in Apple's Command Line Tools or Homebrew's.
 - tmux and Python 3.11 or later. The Homebrew formula installs both.
-- [Warp](https://www.warp.dev), for the features that open terminal tabs (`tabs` and
-  `live-view`). Warp is the only terminal supported today. Without it you can still use
-  every other feature.
+- A terminal for the features that open terminal tabs (`tabs` and `live-view`):
+  [Warp](https://www.warp.dev), or Terminal, the app macOS comes with. Without one you can
+  still use every other feature.
 
 ## Install
 
@@ -71,9 +71,10 @@ own GitHub credentials (for example `gh auth setup-git`).
 
 3. **On the phone**, open the Claude app. The ready session appears in your session list;
    its name starts with the project's name (`shop`). Write in it and work starts.
-4. **On the Mac**, with Warp running, a tab opens on that session soon after your first
-   message, and porchlight prepares the next ready session. Archiving the session in the
-   app ends it and closes its tab.
+4. **On the Mac**, with your terminal running, a tab opens on that session soon after your
+   first message, and porchlight prepares the next ready session. Archiving the session in
+   the app ends it and closes its tab (in Terminal, when its profile closes windows: see
+   [A tab does not open](#a-tab-does-not-open)).
 5. See every project's sessions:
 
    ```sh
@@ -95,9 +96,9 @@ With the `server` feature on, you can also create new sessions on this Mac from 
 
 1. **Prerequisites**: Claude Code, git, tmux and each supported terminal app, each marked
    `ok` or `missing` with what to do about it. Nothing is installed from here.
-2. **Terminal**: the app tabs open in (Warp), marked installed or not installed, or
-   `None`: no tab opens and sessions run hidden. `None` is offered only while no linked
-   project has `tabs`; a project linked later with `tabs` asks for a terminal.
+2. **Terminal**: the app tabs open in (Warp, or Terminal), marked installed or not
+   installed, or `None`: no tab opens and sessions run hidden. `None` is offered only while
+   no linked project has `tabs`; a project linked later with `tabs` asks for a terminal.
 3. **Default permission mode**: one of the modes your installed `claude --help` lists. When
    they cannot be read, you type one.
 4. **Default features**: a checklist of the [features](#features-and-presets). Turning one
@@ -154,7 +155,7 @@ porchlight init ~/Projects/shop --name shop --permission-mode plan --preset reco
 | `--name <name>` | the project's name |
 | `--permission-mode <mode>` | its permission mode; one that `claude --help` lists |
 | `--preset <name>` or `--feature <feature>` | its features: a preset, or each feature with its own `--feature`, including the features each one builds on |
-| `--terminal warp` | the terminal, for all projects |
+| `--terminal warp` or `--terminal apple-terminal` | the terminal, for all projects |
 | `--base <branch>` | the branch new worktrees start from (no screen asks for it) |
 | `--yes` | every other screen takes the value it starts from, and the summary is confirmed |
 
@@ -321,7 +322,8 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
   project's session prefix, which is the project's name unless you set `session_prefix`.
   Turning the feature off ends the session that waits; sessions in use are followed until
   they end.
-- **`tabs`**: tabs open in Warp, and only while Warp is running: porchlight never starts it.
+- **`tabs`**: tabs open in the terminal you chose, and only while it is running:
+  porchlight never starts it. In Warp each session gets a tab; in Terminal, a window.
   A tab's title is the session prefix and the session's title or first prompt. Without
   `tabs`, a session in use keeps running hidden, and `porchlight status` prints the command
   that shows it in a terminal.
@@ -382,7 +384,7 @@ features = ["server", "resume-list"]
 
 | Key | Type | Rules |
 | --- | --- | --- |
-| `terminal` | text | The app tabs open in. Only `"warp"` today. Required when any project has `tabs`; left out when `setup` is answered `None`. |
+| `terminal` | text | The app tabs open in: `"warp"` or `"apple-terminal"` (Terminal). Required when any project has `tabs`; left out when `setup` is answered `None`. |
 | `keep_awake` | text | Optional. When `keep-awake` holds the Mac awake: `"always"` (the default: on AC power and on battery) or `"plugged-in"` (on AC power only). One setting for the Mac. |
 | `[defaults]` | table | Optional. What `init` starts from for a new project. |
 | `[projects.<name>]` | table | One per project. |
@@ -442,7 +444,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 
 | Command | Flags | What it does |
 | --- | --- | --- |
-| `setup` | `--terminal warp`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
+| `setup` | `--terminal warp\|apple-terminal\|none`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
 | `init [folder]` | as `setup`, plus `--name <name>`, `--base <branch>` | Link a folder's repository as a project, or replace the settings of one already linked. |
 | `deinit [folder]` | `--yes` | Unlink a project's folder; sessions in use stay. |
 | `status` | | Print the sessions of every project. |
@@ -633,10 +635,19 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
 
 ### A tab does not open
 
-- The project needs `tabs`, the configuration `terminal = "warp"`, and Warp must be
-  installed (`doctor` looks for it in `/Applications` and `~/Applications`).
-- Warp must be running: porchlight never starts it. The tab opens at the next pass once
-  Warp runs.
+- The project needs `tabs`, and the configuration a terminal: `terminal = "warp"` or
+  `terminal = "apple-terminal"`. Warp must be installed (`doctor` looks for it in
+  `/Applications` and `~/Applications`); Terminal comes with macOS.
+- The terminal must be running: porchlight never starts it. The tab opens at the next pass
+  once it runs.
+- With Terminal, porchlight opens each window through AppleScript, so macOS asks once
+  whether it may control Terminal. If that was refused, the log says
+  `failed to open a tab ... Not authorized to send Apple events to Terminal`: allow it in
+  System Settings, Privacy & Security, Automation.
+- With Terminal, a window whose session ended stays open, showing `[Process completed]`,
+  when its profile says so. To have it close, set Terminal, Settings, Profiles, your
+  profile, Shell, "When the shell exits" to "Close if the shell exited cleanly" or
+  "Close the window". porchlight does not change your Terminal settings.
 - After three failed attempts the session keeps running without a tab, driven from the app,
   and no tab is tried again for it. `status` marks it `hidden` and prints, below it, the
   command that attaches to it in a terminal. The log says `no tab opened for ... (attempt N)`.

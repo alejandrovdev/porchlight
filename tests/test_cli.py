@@ -128,7 +128,7 @@ class Basics(CommandLine):
                 self.printed,
                 [
                     "The configuration %s has problems:" % self.file,
-                    'terminal: unknown terminal "kitty"; one of: warp',
+                    'terminal: unknown terminal "kitty"; one of: warp, apple-terminal',
                     "projects.shop.path: missing",
                 ],
             )
@@ -750,7 +750,7 @@ class Agents(CommandLine):
             self.printed[:5],
             [
                 "The configuration %s has problems:" % self.file,
-                'terminal: unknown terminal "kitty"; one of: warp',
+                'terminal: unknown terminal "kitty"; one of: warp, apple-terminal',
                 "The file could not be read: the agents are found by their labels, and the free sessions in the "
                 "folders of the state.",
                 SERVICE_LABEL + ": unloaded and removed",

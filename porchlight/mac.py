@@ -28,7 +28,7 @@ class Mac:
         """The Mac of a configuration: its terminal, the environment's folders and tools."""
         environ = os.environ if environ is None else environ
         options = {}
-        if names.chosen("warp_tab_configs", environ):
+        if configuration.terminal == terminal.Warp.name and names.chosen("warp_tab_configs", environ):
             options["configs"] = names.chosen("warp_tab_configs", environ)
         return cls(terminal.named(configuration.terminal, **options), environ, config_file)
 
