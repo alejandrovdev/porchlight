@@ -8,8 +8,8 @@
 
 One agent, the service, keeps the sessions of every project (`porchlight run`); it exists
 exactly while the configuration has a project. Each project with the `server` feature has
-an agent of its own (`porchlight server <project> --permission-mode <mode>`): the mode is in
-its definition, so a new one is a change.
+an agent of its own (`porchlight server <project> --permission-mode <mode>`). The server runs
+in the configuration's mode; the one its definition names makes a new mode a change.
 
 A server that runs is never stopped, restarted or removed unless asked with `servers`: the
 app cannot start again the sessions that would end with it. `apply` takes `servers` as True

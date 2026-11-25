@@ -12,7 +12,7 @@
     start, stop [--servers]    load the agents that are installed, unload the service
     uninstall [--servers] [--purge]   remove the agents and let go of the free sessions
     run [--once]               the service: keep the sessions of every project
-    server <project> [--permission-mode <mode>]   a project's server (what its agent runs)
+    server <project>           a project's server (what its background agent runs)
 
 Every command reads the configuration file (`--config <file>`, else the default one) and
 exits with 0 when it did what was asked, 1 when it refused or something needs attention,
@@ -26,7 +26,6 @@ calls.
 """
 
 import argparse
-import dataclasses
 import os
 import sys
 from pathlib import Path
@@ -101,9 +100,14 @@ def serve_project(chosen, configuration, mac, out):
     if not project.has("server"):
         out('The project "%s" does not have the server feature: it has no server to run.' % project.name)
         return 1
-    if chosen.permission_mode:
-        # What its agent was loaded with: a new mode waits until `apply --servers` restarts it.
-        project = dataclasses.replace(project, permission_mode=chosen.permission_mode)
+    written_for = chosen.permission_mode  # the mode its agent names, so `apply` sees a new one
+    if written_for and written_for != project.permission_mode:
+        # Every start takes the configuration's mode: a login or `start` brings a new one in.
+        out(
+            'The configuration gives "%s" the permission mode "%s"; its agent was written for "%s". '
+            'Running in "%s". To bring the agent up to date: %s'
+            % (project.name, project.permission_mode, written_for, project.permission_mode, names.command("apply", "--servers"))
+        )
     project_server.run(project, mac)  # this process is the server from here on
     return 0
 
@@ -292,7 +296,7 @@ def parser():
         names.SERVER_MODE,
         dest="permission_mode",
         metavar="<mode>",
-        help="the permission mode to run in, which its agent names; else the project's",
+        help="the mode its agent was written for, so that apply sees a new one; it runs in the project's",
     )
     # apply, start, stop and uninstall refuse root themselves (`agents`); these delete files too.
     for deleting in (running, serving):

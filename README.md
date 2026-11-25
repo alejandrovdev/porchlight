@@ -426,7 +426,7 @@ The service reads the file on every pass, so a change to a project's features ta
 at its next pass. `apply` is what adds or removes the background agents: run it after you
 add or remove a project or its `server` feature. It also installs the session settings of
 projects that have no running server. A server that is running keeps the permission mode it
-started with until `apply --servers` restarts it: see [Running and stopping](#running-and-stopping).
+started with until it starts again: see [Running and stopping](#running-and-stopping).
 
 ## Commands
 
@@ -448,7 +448,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 | `stop` | `--servers` | Unload the service until `start` or the next login. Sessions already running keep running. |
 | `uninstall` | `--servers`, `--purge` | Remove the agents and end the free sessions. Sessions in use keep running. |
 | `run` | `--once` | The service itself, what its login agent runs. `--once` makes one pass and exits. |
-| `server <project>` | `--permission-mode <mode>` | A project's Remote Control server, what its login agent runs. Without `--permission-mode`, it runs in the project's mode. |
+| `server <project>` | `--permission-mode <mode>` | A project's Remote Control server, what its login agent runs, in the project's permission mode. `--permission-mode` names the mode its agent was written for; when the project's differs, it says so in the server's log. |
 
 You do not need to type `run` or `server`: the login agents run them.
 
@@ -483,7 +483,9 @@ You do not need to type `run` or `server`: the login agents run them.
 - A server's definition is its command, with the project's permission mode, its folder and
   its environment. After you change a project's permission mode, `apply` (and `init`) say
   that the running server was left as it is, though its definition changed: **it keeps the
-  mode it started with**. To have it use the new mode, restart it (its sessions end):
+  mode it started with** until it starts again, and every start takes the configuration's
+  mode. To restart it now with the new mode and bring its agent up to date (its sessions
+  end):
 
   ```sh
   porchlight apply --servers
@@ -649,8 +651,8 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
 
 ### A server uses an old permission mode
 
-A running server keeps the mode it started with. Restart it with `porchlight stop --servers`
-and `porchlight start` (its sessions end). See [Running and stopping](#running-and-stopping).
+A running server keeps the mode it started with. Restart it with `porchlight apply --servers`
+(its sessions end). See [Running and stopping](#running-and-stopping).
 
 ## Uninstall
 

@@ -432,15 +432,27 @@ class Server(CommandLine):
         self.assertEqual(words[words.index("--settings") + 1], str(settings))
         self.assertEqual(self.mac.spawned, [], "keeping the Mac awake is the service's")
 
-    def test_runs_in_the_permission_mode_its_agent_names(self):
+    def test_runs_in_the_projects_mode_and_says_so_when_its_agent_names_another(self):
         (shop,) = self.configure(shop=("server",))
         settings = self.mac.settings(shop)
 
         self.assertEqual(self.become("shop", "--permission-mode", "acceptEdits"), 0)
 
         words = self.execve.call_args.args[1]
-        self.assertEqual(words[words.index("--permission-mode") + 1], "acceptEdits")
-        self.assertEqual(json.loads(settings.read_text())["permissions"]["defaultMode"], "acceptEdits")
+        self.assertEqual(words[words.index("--permission-mode") + 1], "plan")
+        self.assertEqual(json.loads(settings.read_text())["permissions"]["defaultMode"], "plan")
+        self.assertEqual(
+            self.printed,
+            ['The configuration gives "shop" the permission mode "plan"; its agent was written for "acceptEdits". '
+             "Running in \"plan\". To bring the agent up to date: porchlight apply --servers"],
+        )
+
+    def test_says_nothing_when_its_agent_names_the_projects_mode(self):
+        self.configure(shop=("server",))
+
+        self.assertEqual(self.become("shop", "--permission-mode", "plan"), 0)
+
+        self.assertEqual(self.printed, [])
 
     def test_without_a_permission_mode_runs_in_the_projects(self):
         (shop,) = self.configure(shop=("server",))
