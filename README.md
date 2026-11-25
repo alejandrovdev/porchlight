@@ -294,8 +294,8 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
 
 - **`server`**: the app creates sessions in the repository through Claude Code's Remote
   Control server, each in its own worktree, `.claude/worktrees/bridge-cse_<id>`. Once a
-  session ended, porchlight removes its worktree if it is clean and its HEAD is on the base
-  branch, and leaves it otherwise, saying why in the project's log; a worktree locked by
+  session ended, porchlight removes its worktree if it is clean, its HEAD is on the base
+  branch and no file `.worktreeinclude` lists was changed in it, and leaves it otherwise, saying why in the project's log; a worktree locked by
   anything but an ended Claude Code process is left locked (see
   [How porchlight works](docs/how-it-works.md#the-life-of-a-session)). The worktree's
   branch is deleted with `git branch -d` only when every commit of it is on the base
@@ -396,7 +396,7 @@ at most 32 characters long.
 | `permission_mode` | text | yes | One word: the mode Claude Code starts each of the project's sessions in. `doctor` checks it against the modes `claude --help` lists. |
 | `preset` | text | one of the two | `minimal` or `recommended`. |
 | `features` | list of text | one of the two | At least one feature, including the features each one builds on. |
-| `base` | text | no | The branch new worktrees start from. Default: see [How it works](docs/how-it-works.md#the-life-of-a-session). |
+| `base` | text | no | The branch new worktrees start from; it cannot start with `-`. Default: see [How it works](docs/how-it-works.md#the-life-of-a-session). |
 | `session_prefix` | text | no | How ready sessions' names start in the app, and the start of tab titles. Letters, digits and hyphens, at most 32. Default: the project's name. No two projects share one. |
 
 Unknown keys are errors. Every command that reads the file reports each problem by its key

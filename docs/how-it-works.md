@@ -87,8 +87,11 @@ sequenceDiagram
 Each ready session works in its own git worktree, `.claude/worktrees/porchlight-<project>-<id>`
 in the repository, on a branch of the same name that starts from the project's base branch.
 Two tasks never share files. When a session ends, its worktree is removed (and its branch
-deleted) only if it is clean and everything committed in it is on the base branch;
-otherwise it is left where it is for you to pick up, and the project's log says why.
+deleted) only if it is clean, everything committed in it is on the base branch, and every
+file `.worktreeinclude` lists in it is the repository's own, unchanged (a copy changed in
+the worktree, or a listed file only the worktree has, keeps it); other ignored files, such
+as build output, are removed with it. Otherwise it is left where it is for you to pick up,
+and the project's log says why.
 Closing a session's tab ends the session; it then counts as closed, and `reopen` brings it
 back.
 
@@ -105,8 +108,8 @@ The Remote Control server gives each of its sessions a worktree too,
 `.claude/worktrees/bridge-cse_<id>`, and leaves it there when the session ends. For a
 project with `server`, porchlight removes such a worktree by the same rule, once no
 process runs its session and neither the worktree nor its transcript has changed for 10
-minutes: only when it is clean (nothing changed, nothing untracked) and its HEAD is on the
-base branch. Otherwise it is unlocked and left, and the project's log says why. A locked
+minutes: only when it is clean (nothing changed, nothing untracked), its HEAD is on the
+base branch and no file `.worktreeinclude` lists was changed in it. Otherwise it is unlocked and left, and the project's log says why. A locked
 one is looked at only when Claude Code locked it (its lock reason starts with `claude `)
 and no process that reason names still runs; any other lock is left as it is, still
 locked, and the log says so. Once such a worktree is removed, porchlight also deletes the
@@ -125,4 +128,14 @@ The base branch is the project's `base`, else the default branch git recorded fo
 repository's `origin`, else, for a repository without `origin`, the branch its main
 checkout is on. porchlight does not fetch: a new worktree starts from that branch as your
 repository knows it.
+
+## Text that comes from a session
+
+Titles, first prompts, app session ids and what the model writes in the live view come
+from the session, and so, in the end, from whoever writes in the app or from what the
+session read. porchlight prints and logs them with every control character replaced (by
+U+FFFD), so they cannot move the cursor, change a terminal's title or clipboard, or hide
+lines; tabs and line breaks stay in the live view and the logs. Text that cannot be stored
+as it is, such as half of an emoji, is kept as an escape in the state file and dropped from
+titles and prompts.
 
