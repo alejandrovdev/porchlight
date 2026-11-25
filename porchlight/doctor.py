@@ -1,21 +1,25 @@
-"""What each project needs on this Mac, checked: the folder, the tools, the terminal, the
-base branch and the permission mode.
+"""What this Mac and each project need, checked: whether Claude Code is signed in and the
+login agents are loaded; then, for each project, the folder, the tools, the terminal, the
+base branch, the permission mode and its server's agent.
 
-    checks(project, mac)         the checks of one project, in the order they are printed
-    report(configuration, mac)   print one line per check, under each project's name
+    checks(project, mac)         the checks of one project's features, in the order they are printed
+    report(configuration, mac)   print one line per check: this Mac's, then each project's under its name
     prerequisites(mac)           what any project may need: the tools and each terminal app
     listed_modes(mac)            the permission modes the installed Claude Code lists
 
 A project is asked only for what its features need: one without `ready-session` needs no
 tmux and no base branch, one without `tabs` no terminal. Nothing is changed and nothing is
-started; the only program that runs is `claude --help`, to read the permission modes the
-installed Claude Code accepts.
+started. The programs that run only answer: `claude --help`, to read the permission modes
+the installed Claude Code accepts; `claude auth status --json`, of which only whether
+someone is signed in is read (no account detail is printed or kept, and no credential is
+read); and launchctl, asked what is loaded.
 """
 
+import json
 import re
 from dataclasses import dataclass
 
-from . import config, names
+from . import agents, config, names
 from .atoms import tools, worktrees
 from .features import ready_sessions
 
@@ -28,6 +32,12 @@ INSTALL = {
     "tmux": "install it with: brew install tmux",
 }
 MODE_OPTION = "--permission-mode"
+THIS_MAC = "This Mac"  # the heading of the checks that are no project's
+SIGN_IN = "Claude Code sign-in"
+SIGN_IN_ASKED = ("auth", "status", "--json")
+# `claude auth status` exits 1 when no one is signed in, and `mac.output` reads only what a
+# command that ended well prints: a shell runs it and always ends well, so its answer is read.
+EVEN_WHEN_IT_FAILS = ("/bin/sh", "-c", '"$0" "$@"; exit 0')
 
 
 @dataclass(frozen=True)
@@ -117,6 +127,64 @@ def mode_check(project, modes):
     return Check(OK, what)
 
 
+def signed_in(text):
+    """What `claude auth status --json` says of the sign-in: True, False, or None when it does
+    not say. Nothing else of the answer is kept."""
+    try:
+        answer = json.loads(text) if text else None
+    except ValueError:
+        return None
+    said = answer.get("loggedIn") if isinstance(answer, dict) else None
+    return said if isinstance(said, bool) else None
+
+
+def sign_in_check(claude, mac):
+    said = signed_in(mac.output(list(EVEN_WHEN_IT_FAILS) + [claude] + list(SIGN_IN_ASKED)))
+    if said is None:
+        return Check(UNKNOWN, SIGN_IN, "`claude auth status` could not say")
+    if not said:
+        return Check(PROBLEM, SIGN_IN, "no one is signed in: run `claude auth login`")
+    return Check(OK, SIGN_IN)
+
+
+def known_agents(mac):
+    """What the agents' folder and launchd say of this install's agents: (the definitions
+    of those the tool wrote, by label; the labels of files it did not write; the labels
+    loaded, or None when launchd cannot tell). Only asked: nothing is loaded or written."""
+    mine, foreign = agents.own_files(mac)
+    return mine, foreign, agents.what_is_loaded(mac, lambda said: None, mine)
+
+
+def agent_check(kind, label, known):
+    """Whether one login agent is in place: its file, then whether launchd has it loaded."""
+    mine, foreign, loaded = known
+    what = "%s agent %s" % (kind, label)
+    if label in foreign:
+        advice = "its file was not written by %s: move it away, then run `%s`" % (names.TOOL, names.command("apply"))
+        return Check(PROBLEM, what, advice)
+    if label not in mine:
+        return Check(PROBLEM, what, "its file is missing: run `%s`" % names.command("apply"))
+    if loaded is None:
+        return Check(UNKNOWN, what, "launchd could not say whether it is loaded")
+    if label not in loaded:
+        return Check(PROBLEM, what, "not loaded: run `%s`" % names.command("start"))
+    return Check(OK, what)
+
+
+def mac_checks(configuration, mac, known):
+    """What any project needs of this Mac: Claude Code signed in (when it is installed: when
+    it is not, the projects' checks say so) and, while there is a project, the service's
+    agent. `known()` gives what `known_agents` says."""
+    results = []
+    try:
+        results.append(sign_in_check(mac.tool("claude"), mac))
+    except tools.ToolNotFound:
+        pass
+    if configuration.projects:
+        results.append(agent_check(agents.SERVICE, names.service_label(mac.environ), known()))
+    return results
+
+
 def checks(project, mac, modes=installed_modes):
     """What a project's features need, each checked. `modes(claude, mac)` gives the
     permission modes the installed Claude Code lists."""
@@ -149,11 +217,8 @@ def checks(project, mac, modes=installed_modes):
 
 
 def report(configuration, mac, out=print):
-    """Print every project's checks; 0 when none failed, 1 otherwise."""
-    if not configuration.projects:
-        out(names.no_project())
-        return 0
-    known = {}
+    """Print this Mac's checks, then every project's; 0 when none failed, 1 otherwise."""
+    known, agents_said = {}, []
 
     def modes(claude, mac):
         """Asked of each installed Claude Code once, however many projects use it."""
@@ -161,16 +226,37 @@ def report(configuration, mac, out=print):
             known[claude] = installed_modes(claude, mac)
         return known[claude]
 
-    failed = False
-    for index, project in enumerate(configuration.projects):
-        if index:
-            out("")
-        out(project.name)
+    def agents_known():
+        """Asked of the agents' folder and launchd once, for the service and every server."""
+        if not agents_said:
+            agents_said.append(known_agents(mac))
+        return agents_said[0]
+
+    def project_checks(project):
+        results = checks(project, mac, modes)
+        if project.has("server"):
+            results.append(agent_check(agents.SERVER, names.server_label(project.name, mac.environ), agents_known()))
+        return results
+
+    sections = [(THIS_MAC, lambda: mac_checks(configuration, mac, agents_known))]
+    sections += [(project.name, lambda project=project: project_checks(project)) for project in configuration.projects]
+    failed = printed = False
+    for heading, find in sections:
         try:
-            results = checks(project, mac, modes)
+            results = find()
         except Exception as error:  # one project never hides the others
             results = [Check(PROBLEM, "its checks could not run", repr(error))]
+        if not results:
+            continue
+        if printed:
+            out("")
+        out(heading)
+        printed = True
         for check in results:
             out("  " + check.line())
             failed = failed or check.failed
+    if not configuration.projects:
+        if printed:
+            out("")
+        out(names.no_project())
     return 1 if failed else 0

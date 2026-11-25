@@ -448,7 +448,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 | `status` | | Print the sessions of every project. |
 | `reopen [name]` | `--project <name>` | Open a closed session again, back online in the app. Without a name, list the closed ones. |
 | `retry` | `--project <name>` | After a free session failed to start, clear the wait before the next try, for every project with `ready-session` or the one named. The service tries at its next pass, within 20 seconds. |
-| `doctor` | | Check what each project needs on this Mac, and say what to do about what is missing. |
+| `doctor` | | Check this Mac (Claude Code signed in, the login agents loaded) and what each project needs on it, and say what to do about what is missing. |
 | `view <project> <session>` | | Follow a session the server started (`cse_...`), read-only. What a `live-view` tab runs. |
 | `resume-list [sync]` | | List the `/resume` copies of the server's sessions, with the command that resumes each. `sync` brings them up to date first. |
 | `apply` | `--servers` | Make the background agents match the configuration. A server that runs is left as it is. |
@@ -564,12 +564,21 @@ porchlight doctor
 porchlight status
 ```
 
-`doctor` checks, for each project, only what its features need: the folder, Claude Code,
-git, tmux, the terminal, the git repository, the base branch and the permission mode. Each
-line is `ok`, `missing`, `problem` or `unknown`, with what to do; the exit code is 1 when
-something is `missing` or a `problem`.
+`doctor` first checks this Mac: whether Claude Code is signed in (it asks
+`claude auth status`, reads only whether someone is, and prints no account detail) and,
+once a project is configured, whether the service's login agent is loaded. Then it checks,
+for each project, only what its features need: the folder, Claude Code, git, tmux, the
+terminal, the git repository, the base branch, the permission mode and, with `server`,
+whether the server's login agent is loaded. An agent that is not loaded is fixed with
+`porchlight start`; one whose file is missing, with `porchlight apply`. Each line is `ok`,
+`missing`, `problem` or `unknown` (what could not be found out), with what to do; the exit
+code is 1 when something is `missing` or a `problem`.
 
 ```text
+This Mac
+  ok       Claude Code sign-in
+  ok       service agent io.github.alejandrovdev.porchlight
+
 shop
   ok       folder ~/Projects/shop
   ok       Claude Code (claude) at ~/.local/bin/claude
@@ -579,6 +588,7 @@ shop
   ok       git repository
   problem  base branch: none could be determined: set `base` for the project in the configuration
   ok       permission mode "manual"
+  problem  server agent io.github.alejandrovdev.porchlight.server.shop: not loaded: run `porchlight start`
 ```
 
 **Logs** are in `~/Library/Logs/porchlight/`: `<project>.log` for what happens to a

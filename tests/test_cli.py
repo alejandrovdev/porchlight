@@ -364,11 +364,18 @@ class Doctor(CommandLine):
         )
 
     def test_prints_one_line_for_each_check_and_exits_zero_when_all_pass(self):
+        self.run_cli("apply")
+        self.printed.clear()
+
         self.assertEqual(self.run_cli("doctor"), 0)
 
-        self.assertEqual(self.printed[0], "shop")
-        self.assertEqual(len(self.printed), 6)
-        self.assertTrue(all(line.startswith(("  ok ", "  unknown ")) for line in self.printed[1:]), self.printed)
+        self.assertEqual(self.printed[0], "This Mac")
+        self.assertEqual(self.printed[3:5], ["", "shop"])
+        self.assertEqual(len(self.printed), 11)
+        headings = ("This Mac", "", "shop")
+        self.assertTrue(
+            all(line.startswith(("  ok ", "  unknown ")) for line in self.printed if line not in headings), self.printed
+        )
 
     def test_exits_one_when_a_check_fails(self):
         del self.mac.found["git"]
