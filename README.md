@@ -254,8 +254,9 @@ flowchart LR
 
 The service works in passes. A pass goes over every project: it keeps one ready session
 waiting, opens the tab of a session that is now in use, ends a session the app archived,
-tidies what ended, opens the read-only tabs of the server's sessions and updates the
-`/resume` copies, each only for the projects that have that feature. A pass comes as soon as
+tidies what ended, opens the read-only tabs of the server's sessions, updates the
+`/resume` copies and removes the worktrees the server's ended sessions left, each only for
+the projects that have that feature. A pass comes as soon as
 the configuration file or a session's transcript changes, and every 20 seconds otherwise
 (the process list cannot be watched). A burst of changes makes one pass.
 
@@ -298,6 +299,17 @@ otherwise it is left where it is for you to pick up, and the project's log says 
 Closing a session's tab ends the session; it then counts as closed, and `reopen` brings it
 back.
 
+The Remote Control server gives each of its sessions a worktree too,
+`.claude/worktrees/bridge-cse_<id>`, and leaves it there when the session ends. For a
+project with `server`, porchlight removes such a worktree by the same rule, once no process
+runs its session and neither the worktree nor its transcript has changed for 10 minutes:
+only when it is clean (nothing changed, nothing untracked) and its HEAD is on the base
+branch. Otherwise it is unlocked and left, and the project's log says why, once. Its branch
+was made by Claude Code and is never deleted. porchlight checks each one once after its
+session ended, and again only when something in it or in the repository's branches
+changed. It touches nothing else of the server: a folder of another name, one git does not
+list as a worktree of the repository, and any case git cannot answer are left as they are.
+
 The base branch is the project's `base`, else the default branch git recorded for the
 repository's `origin`, else, for a repository without `origin`, the branch its main
 checkout is on. porchlight does not fetch: a new worktree starts from that branch as your
@@ -317,6 +329,11 @@ repository knows it.
 
 The presets are `minimal` (`server`) and `recommended` (all seven).
 
+- **`server`**: the app creates sessions in the repository through Claude Code's Remote
+  Control server, each in its own worktree, `.claude/worktrees/bridge-cse_<id>`. Once a
+  session ended, porchlight removes its worktree if it is clean and its HEAD is on the base
+  branch, and leaves it otherwise, saying why in the project's log (see
+  [How it works](#how-it-works)). The worktree's branch stays.
 - **`ready-session`**: the session waits hidden in porchlight's own tmux server
   (`tmux -L porchlight`), apart from any tmux you run. Its name in the app starts with the
   project's session prefix, which is the project's name unless you set `session_prefix`.
@@ -536,7 +553,7 @@ You do not need to type `run` or `server`: the login agents run them.
 | Where | What |
 | --- | --- |
 | `~/Library/Application Support/porchlight/config.toml` | the configuration |
-| `~/Library/Application Support/porchlight/projects/<project>/` | each project's state: `ready-sessions.json`, `view-tabs.json`, `resume-list.json`, their locks, and `settings.json` (with `settings.json.next` while a change waits to be installed) |
+| `~/Library/Application Support/porchlight/projects/<project>/` | each project's state: `ready-sessions.json`, `view-tabs.json`, `resume-list.json`, `server-worktrees.json`, their locks, and `settings.json` (with `settings.json.next` while a change waits to be installed) |
 | `~/Library/Application Support/porchlight/service.lock` | held by the running service |
 | `~/Library/Logs/porchlight/` | `<project>.log`, `agent.service.log`, `agent.server.<project>.log` |
 | `~/Library/LaunchAgents/` | the login agents' files (below) |
@@ -546,7 +563,9 @@ You do not need to type `run` or `server`: the login agents run them.
 
 The folders porchlight makes for its configuration, state and logs carry a `.porchlight` file; `--purge`
 deletes only inside folders that have it. The worktrees of the server's sessions
-(`.claude/worktrees/bridge-cse_...`) are made by Claude Code, not by porchlight.
+(`.claude/worktrees/bridge-cse_...`) are made by Claude Code, not by porchlight; porchlight
+removes one once its session ended, only when nothing in it would be lost (see
+[How it works](#how-it-works)), and never deletes its branch.
 
 ### Login agents
 
@@ -728,8 +747,9 @@ A running server keeps the mode it started with. Restart it with `porchlight app
    brew untap alejandrovdev/porchlight
    ```
 
-Left in place: the worktrees in each repository and their branches, and the `/resume`
-copies in `~/.claude/projects`.
+Left in place: the worktrees in each repository that were not removed (the ready
+sessions' and the server's sessions'), their branches, the branches of the server's
+sessions, and the `/resume` copies in `~/.claude/projects`.
 
 ## Development
 
