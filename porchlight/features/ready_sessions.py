@@ -41,6 +41,10 @@ Only sessions in this project's own state are ever stopped or tidied; a session 
 started by hand is never touched. A worktree is removed only when it is clean and its HEAD
 is on the base branch; otherwise it is unlocked and left.
 
+Text a session brings (its first prompt, its title, its session in the app) is kept
+printable (`text.one_line`), and so is what is printed or logged of it: a control character
+from the phone never reaches a terminal or a log.
+
 Three features of a project decide what happens here. Without `ready-session` no free
 session is prepared, and one that still waits from before is ended and discarded; a session
 in use is followed until it ends, so the app still archives it and its worktree is still
@@ -75,6 +79,7 @@ from pathlib import Path
 
 from .. import config, names, session_settings
 from ..atoms import include, processes, tools, transcripts, worktrees
+from ..atoms.text import one_line, printable
 
 STATE = "ready-sessions"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -146,14 +151,14 @@ def prompt_text(entry):
         )
     if not isinstance(content, str) or content.lstrip().startswith("<"):
         return ""
-    return " ".join(content.split())[:200]
+    return one_line(content)[:200]
 
 
 def summarize(entries):
     """What a stretch of transcript says about its session.
 
     The first prompt, the title (the user's own over a generated one), the session it is
-    in the app, and when the app last ended or archived it.
+    in the app, and when the app last ended or archived it. Each text is printable.
     """
     summary = new_summary()
     generated = ""
@@ -162,11 +167,11 @@ def summarize(entries):
         if kind == "user":
             summary["prompt"] = summary["prompt"] or prompt_text(entry)
         elif kind == "custom-title":
-            summary["title"] = " ".join(str(entry.get("customTitle") or "").split())
+            summary["title"] = one_line(entry.get("customTitle") or "")
         elif kind == "ai-title":
-            generated = " ".join(str(entry.get("aiTitle") or "").split())
+            generated = one_line(entry.get("aiTitle") or "")
         elif kind == "bridge-session":
-            summary["cse"] = str(entry.get("bridgeSessionId") or "") or summary["cse"]
+            summary["cse"] = one_line(entry.get("bridgeSessionId") or "") or summary["cse"]
         elif kind == "system" and str(entry.get("content") or "").startswith(ARCHIVED):
             summary["ended_at"] = max(summary["ended_at"], seconds(entry.get("timestamp")))
     summary["title"] = summary["title"] or generated
@@ -288,7 +293,9 @@ def hidden_start(project, session, worktree, tmux, claude, settings, porchlight,
 
 
 def label(record, session):
-    return record["title"] or record["prompt"] or names.short(session)
+    """How a session is named in what is printed, logged or shown on its tab: printable even
+    when the state was written by an older version."""
+    return one_line(record["title"] or record["prompt"] or names.short(session))
 
 
 def tab_title(project, record, session):
@@ -327,19 +334,20 @@ def hidden(record):
     return not record.get("shown", True) or given_up(record)
 
 
-def offer(text, found, closed, out):
+def offer(asked, found, closed, out):
     """Say why no session is reopened and list the candidates: those a name matched, else
     every closed one. Both come as lines ready to print. 0 when the list was asked for."""
     listed = found or closed
-    if not text.strip():
+    shown = printable(asked)  # a session may run it with what the phone wrote
+    if not asked.strip():
         out("Closed sessions:" if listed else "No closed session.")
     elif found:
-        out('Several closed sessions match "%s"; run it again with the id of one:' % text)
+        out('Several closed sessions match "%s"; run it again with the id of one:' % shown)
     else:
-        out('No closed session matches "%s".%s' % (text, " The closed ones:" if listed else ""))
+        out('No closed session matches "%s".%s' % (shown, " The closed ones:" if listed else ""))
     for line in listed:
         out("  " + line)
-    return 0 if not text.strip() else 1
+    return 0 if not asked.strip() else 1
 
 
 # What follows touches the Mac, through the `mac` it is given: processes, git, tmux, the
@@ -721,7 +729,7 @@ def print_sessions(project, state, mac, out):
     for session in sorted(state["sessions"], key=lambda key: -state["sessions"][key]["changed"]):
         record = state["sessions"][session]
         if session in live:
-            app = WAITS_FOR_TRUST if session in waiting else record["cse"] or "not in the app yet"
+            app = WAITS_FOR_TRUST if session in waiting else one_line(record["cse"]) or "not in the app yet"
             where = "pid %d, %s" % (live[session], app)
             where += ", hidden" if hidden(record) else ""
         else:

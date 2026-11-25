@@ -544,6 +544,26 @@ class Reconcile(OnTheMac):
         self.assertEqual([record["state"] for record in state["sessions"].values()], ["free"])
         self.assertEqual(len(self.mac.tmux_runner.having("new-session")), 1, "one free session, not one per pass")
 
+    def test_half_a_character_in_a_prompt_still_leaves_one_recorded_session_per_pass(self):
+        # A lone surrogate (half an emoji) from the phone once made every save fail, so each
+        # pass prepared a free session it never recorded.
+        project = self.having("ready-session")
+        free = self.record("free", shown=False, tmux="shop-aaaaaaaa")
+        self.save({A: free})
+        self.transcript(A, free, {"type": "user", "message": {"content": "Fix \ud83d the header \U0001F600"}})
+        self.mac.ps = f"301 claude --session-id {A} --remote-control\n"
+        self.git(symbolic_ref=standins.result(stdout="origin/trunk\n"), rev_parse=standins.result(returncode=1))
+        self.claude_starts(pid=502)
+
+        ready_sessions.reconcile(project, self.mac)
+        ready_sessions.reconcile(project, self.mac)
+
+        sessions = self.saved()["sessions"]
+        self.assertEqual(len(self.mac.tmux_runner.having("new-session")), 1, "one new free session, not one per pass")
+        self.assertEqual(sorted(record["state"] for record in sessions.values()), ["free", "used"])
+        self.assertEqual(sessions[A]["prompt"], "Fix the header \U0001F600")
+        self.assertEqual(self.mac.log_text(project).count("prepared the free session"), 1)
+
     def test_stops_only_a_session_of_its_own_state_that_the_app_archived(self):
         mine, free = self.record("used"), self.record("free", B, shown=False)
         self.save({A: mine, B: free})
@@ -755,6 +775,16 @@ class Reopen(OnTheMac):
         self.assertIn("Header on phones", self.printed[1])
         self.assertEqual(len(self.printed), 2, "a session that is open is not offered")
         self.assertEqual(self.terminal.tabs, [])
+
+    def test_lists_and_echoes_text_from_a_session_printable(self):
+        self.save({A: self.record("closed", title="Header \x1b[2J on phones", tidied=True)})
+
+        self.assertEqual(self.reopen(""), 0)
+        self.assertEqual(self.reopen("foot\x1b[2Jer"), 1)
+
+        self.assertIn("Header \ufffd[2J on phones", self.printed[1])
+        self.assertEqual(self.printed[2], 'No closed session matches "foot\ufffd[2Jer". The closed ones:')
+        self.assertFalse([line for line in self.printed if "\x1b" in line])
 
     def test_says_when_nothing_is_closed_or_nothing_matches(self):
         self.save({})
@@ -1027,6 +1057,22 @@ class Status(OnTheMac):
         self.assertEqual(len(self.printed), 2)
         self.assertRegex(self.printed[0], r"^aaaaaaaa  used .* Header on phones  \(pid 301, cse_01AAA, hidden\)$")
         self.assertRegex(self.printed[1], r"^bbbbbbbb  closed .* Fix the footer  \(not running\)$")
+
+    def test_prints_text_from_a_session_printable_even_from_an_older_state(self):
+        self.save(
+            {
+                A: self.record("used", title="Header \x1b]0;owned\x07 on phones 😀", cse="cse_01\x1b[2J", shown=False),
+                B: self.record("closed", B, prompt="Fix the caf\u00e9 \x9b footer", changed=self.mac.now - 60),
+            }
+        )
+        self.mac.ps = f"301 claude --session-id {A} --remote-control\n"
+
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        self.assertRegex(
+            self.printed[0], r"^aaaaaaaa  used .* Header \ufffd\]0;owned\ufffd on phones 😀  \(pid 301, cse_01\ufffd\[2J, hidden\)$"
+        )
+        self.assertRegex(self.printed[1], r"^bbbbbbbb  closed .* Fix the café \ufffd footer  \(not running\)$")
 
     def test_without_tabs_prints_the_command_that_attaches_to_each_running_session_without_a_tab(self):
         project = self.having("ready-session")

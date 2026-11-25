@@ -182,6 +182,17 @@ class Status(OnTheMac):
         self.assertIn("tab closed by the user", self.printed[1])
         self.assertIn("tab open", self.printed[2])
 
+    def test_prints_and_logs_the_first_prompt_printable(self):
+        self.write_transcript({"type": "queue-operation", "content": "Fix \x1b[2J the caf\u00e9"})
+        self.terminal.on_open = self.view_starts
+
+        view_tabs.status(self.project, self.mac, out=self.printed.append)
+        view_tabs.open_tab(self.project, LIVE, self.mac)
+
+        self.assertRegex(self.printed[0], r"^cse_01AAA  pid 101 +no tab yet +Shop · Fix \ufffd\[2J the café$")
+        self.assertEqual(self.terminal.tabs[0].title, "Shop · Fix \ufffd[2J the café")
+        self.assertIn("opened a tab for cse_01AAA (Shop · Fix \ufffd[2J the café)", self.mac.log_text(self.project))
+
     def test_says_when_no_server_session_runs(self):
         self.mac.ps = ""
 

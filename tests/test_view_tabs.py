@@ -161,6 +161,7 @@ class TabConfig(unittest.TestCase):
         self.assertEqual(view_tabs.tab_title(SHOP, "Fix the\nheader", LIVE), "Shop · Fix the header")
         self.assertLessEqual(len(view_tabs.tab_title(SHOP, long_prompt, LIVE)), len("Shop · ") + 40)
         self.assertEqual(view_tabs.tab_title(SHOP, "", "cse_01ABCDEFGHJKMNPQRSTVWXYZ"), "Shop · TVWXYZ")
+        self.assertEqual(view_tabs.tab_title(SHOP, "Fix \x1b]0;x\x07 the café 😀\ud83d", LIVE), "Shop · Fix \ufffd]0;x\ufffd the café 😀")
 
 
 def message(kind, content, **extra):

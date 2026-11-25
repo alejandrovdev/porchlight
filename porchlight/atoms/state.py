@@ -77,7 +77,10 @@ class Store:
     def save(self, table):
         self.make_folder()
         draft = self.path.with_suffix(".writing")
-        draft.write_text(json.dumps(table, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf8")
+        # Text stays as it is in the file, but half a character (a lone surrogate, which a
+        # transcript may hold) is written as its JSON escape: no string can make a save fail.
+        written = json.dumps(table, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        draft.write_text(written, encoding="utf8", errors="backslashreplace")
         os.replace(draft, self.path)
 
 

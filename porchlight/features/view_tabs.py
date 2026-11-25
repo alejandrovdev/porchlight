@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .. import names
 from ..atoms import processes, transcripts, worktrees
+from ..atoms.text import one_line
 from . import live_view
 
 STATE = "view-tabs"
@@ -69,7 +70,8 @@ def step(live, viewing, state, open_tab):
 
 
 def tab_title(project, prompt, session):
-    text = " ".join(prompt.split())
+    """A tab's title, as `status` and the log show it too: the first prompt, printable."""
+    text = one_line(prompt)
     if not text:
         return names.tab_title(project, session[-6:])
     return names.tab_title(project, text if len(text) <= 40 else text[:39] + "…")

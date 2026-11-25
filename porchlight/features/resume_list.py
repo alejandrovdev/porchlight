@@ -19,6 +19,7 @@ A project without `resume-list` gets no copy; the ones written before stay where
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 import uuid
@@ -26,6 +27,7 @@ from pathlib import Path
 
 from .. import names
 from ..atoms import transcripts, worktrees
+from ..atoms.text import one_line, printable
 
 STATE = "resume-list"
 SERVER_ORIGIN = b'"entrypoint":"sdk-cli"'
@@ -129,7 +131,7 @@ def describe(source):
                 prompt = str(entry.get("lastPrompt") or "")
             if prompt and cwd:
                 break
-    return " ".join(prompt.split()), cwd
+    return one_line(prompt), cwd
 
 
 def running_commands(mac):
@@ -173,10 +175,10 @@ def list_copies(project, mac, out=print, caution=True):
             status = "worktree removed"
         resume = "claude --resume " + target_id
         if status != "worktree removed":
-            resume = "cd '%s' && %s" % (cwd, resume)
+            resume = "cd %s && %s" % (shlex.quote(cwd), resume)
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(modified))
         out("%s  %-17s  %s" % (when, status, prompt[:90] or "(no prompt)"))
-        out("    " + resume)
+        out("    " + printable(resume))
     if caution:
         out("")
         for line in CAUTION:
