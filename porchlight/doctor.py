@@ -1,6 +1,7 @@
 """What this Mac and each project need, checked: whether Claude Code is signed in and recent
 enough, and the login agents are loaded; then, for each project, the folder, the tools, the terminal, the
-base branch, the permission mode and its server's agent.
+base branch, the permission mode, the ready sessions that wait on Claude Code's workspace trust
+question and its server's agent.
 
     checks(project, mac)         the checks of one project's features, in the order they are printed
     report(configuration, mac)   print one line per check: this Mac's, then each project's under its name
@@ -14,7 +15,8 @@ tmux and no base branch, one without `tabs` no terminal. Nothing is changed and 
 started. The programs that run only answer: `claude --help`, to read the permission modes
 the installed Claude Code accepts; `claude auth status --json`, of which only whether
 someone is signed in is read (no account detail is printed or kept, and no credential is
-read); `claude --version`; and launchctl, asked what is loaded.
+read); `claude --version`; launchctl, asked what is loaded; and tmux, asked what a running
+session that is not in the app yet shows (no key is sent to it).
 """
 
 import json
@@ -277,7 +279,22 @@ def checks(project, mac, modes=installed_modes):
                     results.append(Check(PROBLEM, "base branch", advice))
     if "claude" in found:
         results.append(mode_check(project, modes(found["claude"], mac)))
+    results += trust_checks(project, mac)
     return results
+
+
+def trust_checks(project, mac):
+    """A problem when ready sessions wait on Claude Code's workspace trust question; nothing
+    when none does, or when what they show cannot be read."""
+    waiting = [names.short(session) for session in ready_sessions.waiting_for_trust(project, mac)]
+    if not waiting:
+        return []
+    if len(waiting) == 1:
+        what, where = "ready session %s waits" % waiting[0], "that session"
+    else:
+        what, where = "ready sessions %s wait" % ", ".join(waiting), "each of those sessions"
+    attach = "attach with the command `%s` prints" % names.command("status")
+    return [Check(PROBLEM, what + " for you to trust the folder", ready_sessions.trust_advice(project, attach, where))]
 
 
 def report(configuration, mac, out=print):

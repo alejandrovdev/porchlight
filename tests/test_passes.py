@@ -347,6 +347,42 @@ class RepeatedLines(Scratch):
         self.assertEqual(self.mac.log_text(blog).count("is missing"), 1, "each project has its own log")
 
 
+class TrustQuestion(Scratch):
+    def test_the_log_says_once_for_each_session_that_it_waits_for_the_folder_to_be_trusted(self):
+        shop = self.project("shop", features=("ready-session",))
+        self.ready_session(shop, A, "free", 301)
+        self.ready_session(shop, B, "used", 302, prompt="Fix the footer")
+        self.ready_session(shop, C, "used", 303, prompt="Fix the header")
+        waiting = {"=shop-aaaaaaaa:", "=shop-cccccccc:"}
+
+        def tmux(words):
+            if "capture-pane" in words:
+                return standins.result(stdout=standins.TRUST_QUESTION if words[-1] in waiting else "> \n")
+            return self.tmux(words)
+
+        self.mac.tmux_runner.answers = tmux
+
+        for _ in range(3):
+            passes.run(config.Config(None, (shop,)), self.mac)
+
+        said = [line for line in self.mac.log_text(shop).splitlines() if "trust" in line]
+        self.assertEqual(len(said), 2, said)
+        for line, session in zip(said, ("aaaaaaaa", "cccccccc")):
+            self.assertTrue(
+                line.endswith(
+                    '%s waits for you to trust the folder: answer "Yes, I trust this folder" in that session '
+                    "(`porchlight status` prints the command that attaches to it), and run `claude` once in %s "
+                    "and trust it so the next sessions do not ask" % (session, names.repository(shop))
+                ),
+                line,
+            )
+        self.assertEqual(self.mac.tmux_runner.having("send-keys"), [], "the question is never answered")
+        self.assertEqual(self.mac.tmux_runner.having("new-session"), [], "the waiting free session is kept")
+        self.assertEqual(self.mac.terminated, [])
+        self.assertEqual({key: record["state"] for key, record in self.ready(shop).items()},
+                         {A: "free", B: "used", C: "used"})  # fmt: skip
+
+
 class Status(Scratch):
     def status(self, *projects, terminal="warp"):
         printed = []

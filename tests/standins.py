@@ -14,6 +14,21 @@ from porchlight.mac import Mac
 
 TMUX_SERVER = "porchlight-test"
 LABEL = "test.porchlight.unit"  # how the label of every agent of a test starts
+# As Claude Code shows its workspace trust question in a session's pane.
+TRUST_QUESTION = """
+ Accessing workspace:
+
+ /srv/shop/.claude/worktrees/porchlight-shop-aaaaaaaa
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a
+ well-known open source project, or work from your team). If not, take a moment to review
+ what's in this folder first.
+
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+
+ Enter to confirm · Esc to cancel
+"""
 
 
 def project(name="shop", path="/srv/shop", mode="plan", base=None, prefix=None, features=None):

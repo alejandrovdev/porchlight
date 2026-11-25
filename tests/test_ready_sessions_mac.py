@@ -715,7 +715,11 @@ class Reconcile(OnTheMac):
         self.assertEqual(self.terminal.asked, 0, "the terminal is not looked for")
         self.assertFalse(self.saved()["sessions"][A]["shown"])
         self.assertEqual(self.mac.terminated, [], "it keeps running hidden")
-        self.assertEqual(self.mac.tmux_runner.calls, [])
+        self.assertEqual(
+            [call[5:] for call in self.mac.tmux_runner.calls],
+            [["capture-pane", "-p", "-J", "-t", "=shop-aaaaaaaa:"]],
+            "tmux is only asked what the session not in the app yet shows",
+        )
 
     def test_two_projects_keep_their_sessions_apart(self):
         (Path(self.scratch.name) / "blog").mkdir()
@@ -1120,6 +1124,74 @@ class Status(OnTheMac):
         ready_sessions.status(self.project, self.mac, out=self.printed.append)
 
         self.assertEqual(self.printed, ["No session with Claude Code's interface yet."])
+
+
+    def panes(self, **shown):
+        """tmux shows each session's pane as given, by its tmux name with _ for -; a pane not
+        given cannot be read."""
+
+        def answer(words):
+            if "capture-pane" in words:
+                name = words[-1].strip("=:").replace("-", "_")
+                return standins.result(stdout=shown[name]) if name in shown else standins.result(1, stderr="no pane")
+
+        self.mac.tmux_runner.answers = answer
+
+    def read_panes(self):
+        return sorted(call[-1] for call in self.mac.tmux_runner.having("capture-pane"))
+
+    def test_a_session_waiting_on_the_trust_question_says_so_and_prints_the_command_that_attaches_even_with_tabs(self):
+        self.save(
+            {
+                A: self.record("free", shown=False, tmux="shop-aaaaaaaa"),
+                # In the app already: its pane is not read, whatever it shows.
+                B: self.record("used", B, cse="cse_01BBB", shown=False, tmux="shop-bbbbbbbb", changed=self.mac.now - 30),
+                C: self.record("used", C, prompt="Fix the footer", shown=False, tmux="shop-cccccccc",
+                               changed=self.mac.now - 60),  # fmt: skip
+                # Not running: its pane is not read.
+                Z: self.record("closed", Z, shown=False, tmux="shop-ffffffff", changed=self.mac.now - 90),
+            }
+        )
+        self.mac.ps = "".join(
+            f"{pid} claude --session-id {session} --remote-control\n" for pid, session in ((301, A), (302, B), (303, C))
+        )
+        self.panes(
+            shop_aaaaaaaa=standins.TRUST_QUESTION,
+            shop_bbbbbbbb=standins.TRUST_QUESTION,
+            shop_cccccccc="Welcome to Claude Code\n> \n",
+            shop_ffffffff=standins.TRUST_QUESTION,
+        )
+
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        self.assertRegex(self.printed[0], r"^aaaaaaaa  free .* \(pid 301, waiting for you to trust the folder, hidden\)$")
+        self.assertEqual(self.printed[1], "    /tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'")
+        self.assertRegex(self.printed[2], r"^bbbbbbbb  used .* \(pid 302, cse_01BBB, hidden\)$")
+        self.assertRegex(self.printed[3], r"^cccccccc  used .* Fix the footer  \(pid 303, not in the app yet, hidden\)$")
+        self.assertRegex(self.printed[4], r"^ffffffff  closed .* \(not running\)$")
+        self.assertEqual(len(self.printed), 5)
+        self.assertEqual(self.read_panes(), ["=shop-aaaaaaaa:", "=shop-cccccccc:"])
+        self.assertEqual(self.mac.tmux_runner.having("send-keys"), [], "the question is never answered")
+        self.assertEqual(self.mac.log_text(self.project), "", "status writes no log")
+
+    def test_a_pane_that_cannot_be_read_is_not_known_and_the_session_prints_as_before(self):
+        self.save({A: self.record("free", shown=False, tmux="shop-aaaaaaaa")})
+        self.mac.ps = f"301 claude --session-id {A} --remote-control\n"
+        self.panes()
+
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        self.assertEqual(len(self.printed), 1)
+        self.assertRegex(self.printed[0], r"^aaaaaaaa  free .* \(pid 301, not in the app yet, hidden\)$")
+        self.assertEqual(self.read_panes(), ["=shop-aaaaaaaa:"])
+
+        self.printed.clear()
+        del self.mac.tmux  # tmux is not installed: no pane can be read
+        del self.mac.found["tmux"]
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        self.assertEqual(len(self.printed), 1)
+        self.assertRegex(self.printed[0], r"^aaaaaaaa  free .* \(pid 301, not in the app yet, hidden\)$")
 
 
 class Retry(OnTheMac):
