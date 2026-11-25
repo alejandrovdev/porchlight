@@ -67,6 +67,7 @@ class Scratch(unittest.TestCase):
         self.mac.outputs[" ".join(SIGN_IN)] = SIGNED_IN
         self.repositories = True
         self.default_branch = "origin/trunk"
+        self.origin = True
         self.printed = []
 
     def tearDown(self):
@@ -77,6 +78,8 @@ class Scratch(unittest.TestCase):
             return standins.result(stdout="true\n") if self.repositories else standins.result(returncode=128)
         if "symbolic-ref" in words:
             return standins.result(stdout=self.default_branch + "\n") if self.default_branch else standins.result(1)
+        if "get-url" in words and not self.origin:
+            return standins.result(2)
 
     def project(self, name="shop", features=None, make=True, mode="plan", base=None):
         if make:
@@ -211,10 +214,24 @@ class Checks(Scratch):
         self.default_branch = None
 
         self.assertIn(
-            ("problem", "base branch", "none could be determined: set `base` for the project in the configuration"),
+            (
+                "problem",
+                "base branch",
+                "none could be determined: set `base` for the project in the configuration, "
+                "or run `git remote set-head origin --auto` in the repository",
+            ),
             self.checks(self.project()),
         )
         self.assertEqual(self.states(self.project(base="origin/main"))["base branch origin/main"], "ok")
+
+    def test_without_origin_the_advice_names_only_the_configuration(self):
+        self.default_branch = None
+        self.origin = False  # and the main checkout is on no branch: the stand-in names none
+
+        self.assertIn(
+            ("problem", "base branch", "none could be determined: set `base` for the project in the configuration"),
+            self.checks(self.project()),
+        )
 
     def test_a_permission_mode_the_installed_claude_does_not_list_is_a_problem(self):
         checks = self.checks(self.project(mode="reckless"))

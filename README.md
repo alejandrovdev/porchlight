@@ -3,9 +3,11 @@
 Leave a light on for your phone: porchlight keeps Claude Code sessions ready on your Mac so
 you can start, follow and close them from the Claude mobile app.
 
-> **Status: in development.** The repository and its Homebrew tap are private for now:
-> `brew install` works only for a GitHub account with access to both. Commands and files
-> may still change before the first public release.
+> **Status: early.** porchlight works and is used every day, but while its version starts
+> with 0, commands and the configuration file may still change between minor releases (see
+> the [changelog](CHANGELOG.md)).
+
+![porchlight setup: the lantern, the steps, the features panel and the details of the option under the cursor](docs/images/setup.png)
 
 Contents: [The problem it solves](#the-problem-it-solves) ·
 [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start) ·
@@ -13,7 +15,8 @@ Contents: [The problem it solves](#the-problem-it-solves) ·
 [How it works](#how-it-works) · [Features and presets](#features-and-presets) ·
 [Configuration](#configuration) · [Commands](#commands) ·
 [Running and stopping](#running-and-stopping) · [Security and privacy](#security-and-privacy) ·
-[Troubleshooting](#troubleshooting) · [Uninstall](#uninstall) · [Development](#development)
+[Troubleshooting](#troubleshooting) · [Uninstall](#uninstall) · [Development](#development) ·
+[License](#license)
 
 ## The problem it solves
 
@@ -32,9 +35,15 @@ It serves one project or several, and each one runs only the features you turn o
 ## Requirements
 
 - A Mac with [Homebrew](https://brew.sh).
-- Claude Code, with `claude` in your `PATH`, signed in with a plan that includes Remote
-  Control. When it is missing, `setup` can install it with Homebrew
-  (`brew install --cask claude-code`); you still sign in by running `claude` once.
+- Claude Code 2.1.92 or later (2.1.327 or later recommended: it stops a server in worktree
+  mode without touching its sessions' ignored files), with `claude` in your `PATH`, signed
+  in with a claude.ai account on a plan that includes Remote Control: Pro, Max, Ultra,
+  Team or Enterprise (on Team and Enterprise an owner turns it on first). Remote Control
+  does not work with an API key: with `ANTHROPIC_API_KEY`, `apiKeyHelper` or
+  `ANTHROPIC_AUTH_TOKEN` set it stays off. When Claude Code is missing, `setup` can install
+  it with Homebrew (`brew install --cask claude-code`); you still sign in by running
+  `claude` once. Homebrew formulas cannot depend on casks, so the formula does not
+  install it. `claude --version` says which version you have.
 - The Claude mobile app, signed in to the same account.
 - git: the one in Apple's Command Line Tools or Homebrew's.
 - tmux and Python 3.11 or later. The Homebrew formula installs both.
@@ -52,9 +61,6 @@ porchlight --version
 The tap is `alejandrovdev/porchlight`. Installing adds the `porchlight` command; nothing
 runs in the background until you link a folder with `porchlight init`.
 
-While the repositories are private, Homebrew downloads them with `git`, which uses your
-own GitHub credentials (for example `gh auth setup-git`).
-
 ## Quick start
 
 1. Set up this Mac once:
@@ -63,6 +69,9 @@ own GitHub credentials (for example `gh auth setup-git`).
    porchlight setup
    ```
 
+   Keep the recommended features it starts with: the next steps need `ready-session` and
+   `tabs`.
+
 2. Link a project. Go to its folder (a git repository) and run `init`:
 
    ```sh
@@ -70,12 +79,15 @@ own GitHub credentials (for example `gh auth setup-git`).
    porchlight init
    ```
 
+   Then run `porchlight doctor`: each line should say `ok`. The service looks at every
+   project every 20 seconds, so the ready session follows within about half a minute.
+
 3. **On the phone**, open the Claude app. The ready session appears in your session list;
    its name starts with the project's name (`shop`). Write in it and work starts.
 4. **On the Mac**, with your terminal running, a tab opens on that session soon after your
    first message, and porchlight prepares the next ready session. Archiving the session in
    the app ends it and closes its tab (in Terminal, when its profile closes windows: see
-   [A tab does not open](#a-tab-does-not-open)).
+   [A tab does not open](docs/troubleshooting.md#a-tab-does-not-open)).
 5. See every project's sessions:
 
    ```sh
@@ -217,8 +229,8 @@ is 1: run `deinit` again.
 
 `setup` changes the terminal and the `[defaults]` that new projects start from; linked
 projects keep their own values. It takes the same flags as `init`, except `--name` and
-`--base`; its `--terminal` also takes `none`, which leaves `terminal` out of the
-configuration:
+`--base`, and also `--keep-awake always|plugged-in` and `--install-missing`; its
+`--terminal` also takes `none`, which leaves `terminal` out of the configuration:
 
 ```sh
 porchlight setup --terminal warp --permission-mode plan --preset recommended --yes
@@ -244,110 +256,12 @@ you log in and starts it again if it ends. It reads the configuration file, keep
 sessions of each project running, and follows what happens in them by reading the
 transcripts Claude Code writes. Each project with the `server` feature has a login agent of
 its own, which runs that project's Remote Control server
-(`porchlight server <project> --permission-mode <mode>`) in its repository. porchlight never talks to Claude's servers itself: every session is an
-ordinary `claude` process, connected through Remote Control.
+(`porchlight server <project> --permission-mode <mode>`) in its repository. porchlight never
+talks to Claude's servers itself: every session is an ordinary `claude` process, connected
+through Remote Control.
 
-```mermaid
-flowchart LR
-    app["Claude mobile app"]
-    rc(["Claude Remote Control"])
-
-    subgraph mac["Your Mac"]
-        direction TB
-        launchd["launchd<br/>login agents"]
-        config[("config.toml")]
-        service["porchlight run<br/>the service"]
-        tab["Terminal tab"]
-
-        subgraph project["Each project: a git repository"]
-            direction TB
-            server["Remote Control server<br/>sessions the app creates"]
-            ready["Ready session<br/>hidden in tmux"]
-            inuse["Session in use"]
-            logs[("Session transcripts")]
-        end
-    end
-
-    app <--> rc
-    rc <-- "every session" --> project
-
-    launchd -- "starts at login,<br/>restarts if it ends" --> service
-    launchd -- "one agent per project<br/>with the server feature" --> server
-    config -- "read on every pass" --> service
-    service -- "prepares in its own worktree" --> ready
-    ready -- "your first message" --> inuse
-    inuse -- "writes" --> logs
-    service -- "reads" --> logs
-    service -- "opens on first use<br/>ends on archive" --> tab
-    tab -- "shows" --> inuse
-```
-
-The service works in passes. A pass goes over every project: it keeps one ready session
-waiting, opens the tab of a session that is now in use, ends a session the app archived,
-tidies what ended, opens the read-only tabs of the server's sessions, updates the
-`/resume` copies and removes the worktrees the server's ended sessions left, each only for
-the projects that have that feature. A pass comes as soon as
-the configuration file or a session's transcript changes, and every 20 seconds otherwise
-(the process list cannot be watched). A burst of changes makes one pass.
-
-- One project that fails, or whose folder is missing, is written to its log; the others
-  still run.
-- A configuration file that stops parsing is reported once in the service's log, and the
-  last one that parsed keeps being served until the file is fixed.
-- Only one service runs at a time. Sessions and tabs keep running when the service restarts.
-
-### The life of a session
-
-```mermaid
-sequenceDiagram
-    actor You as You on the phone
-    participant Ready as Ready session
-    participant P as porchlight
-    participant Tab as Terminal tab
-
-    Note over Ready: hidden in tmux, connected to the app
-    You->>Ready: first message
-    Ready-->>P: the transcript shows a prompt
-    P->>Tab: open a tab on the session
-    P->>P: prepare the next ready session
-    You->>Ready: keep working from the phone or the Mac
-    You->>Ready: archive in the app
-    Ready-->>P: the transcript shows the archive
-    P->>Ready: stop
-    Note over Tab: closes with the session
-    P->>P: remove the worktree if nothing in it would be lost
-    You->>Ready: ask the next ready session to reopen it by name
-    Ready->>P: porchlight reopen, with the name
-    P->>Tab: resume it in a new tab, back online in the app
-```
-
-Each ready session works in its own git worktree, `.claude/worktrees/porchlight-<project>-<id>`
-in the repository, on a branch of the same name that starts from the project's base branch.
-Two tasks never share files. When a session ends, its worktree is removed (and its branch
-deleted) only if it is clean and everything committed in it is on the base branch;
-otherwise it is left where it is for you to pick up, and the project's log says why.
-Closing a session's tab ends the session; it then counts as closed, and `reopen` brings it
-back.
-
-The Remote Control server gives each of its sessions a worktree too,
-`.claude/worktrees/bridge-cse_<id>`, and leaves it there when the session ends. For a
-project with `server`, porchlight removes such a worktree by the same rule, once no process
-runs its session and neither the worktree nor its transcript has changed for 10 minutes:
-only when it is clean (nothing changed, nothing untracked) and its HEAD is on the base
-branch. Otherwise it is unlocked and left, and the project's log says why. A locked one is
-looked at only when Claude Code locked it (its lock reason starts with `claude `) and no
-process that reason names still runs; any other lock is left as it is, still locked, and
-the log says so. Its branch was made by Claude Code and is never deleted. porchlight checks
-each one once after its session ended, and again only when something in it or in the
-repository's branches changed, or when the process that held its lock ended; the log says
-why a worktree is left only when that reason is new. It touches nothing else of the
-server: a folder of another name, one git does not list as a worktree of the repository,
-and any case git cannot answer are left as they are.
-
-The base branch is the project's `base`, else the default branch git recorded for the
-repository's `origin`, else, for a repository without `origin`, the branch its main
-checkout is on. porchlight does not fetch: a new worktree starts from that branch as your
-repository knows it.
+The diagrams, the life of a session from the moment it waits to the moment it is archived,
+and what happens to each worktree are in [How porchlight works](docs/how-it-works.md).
 
 ## Features and presets
 
@@ -463,7 +377,7 @@ at most 32 characters long.
 | `permission_mode` | text | yes | One word: the mode Claude Code starts each of the project's sessions in. `doctor` checks it against the modes `claude --help` lists. |
 | `preset` | text | one of the two | `minimal` or `recommended`. |
 | `features` | list of text | one of the two | At least one feature, including the features each one builds on. |
-| `base` | text | no | The branch new worktrees start from. Default: see [How it works](#the-life-of-a-session). |
+| `base` | text | no | The branch new worktrees start from. Default: see [How it works](docs/how-it-works.md#the-life-of-a-session). |
 | `session_prefix` | text | no | How ready sessions' names start in the app, and the start of tab titles. Letters, digits and hyphens, at most 32. Default: the project's name. No two projects share one. |
 
 Unknown keys are errors. Every command that reads the file reports each problem by its key
@@ -471,8 +385,8 @@ and exits with 1:
 
 ```text
 The configuration ~/Library/Application Support/porchlight/config.toml has problems:
-projects.blog.features: "resume-list" needs "server"
-projects.blog.colour: unknown key
+projects.notes.features: "resume-list" needs "server"
+projects.notes.colour: unknown key
 terminal: required by "tabs" of the project "shop"
 ```
 
@@ -497,7 +411,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 | Command | Flags | What it does |
 | --- | --- | --- |
 | `setup` | `--terminal warp\|apple-terminal\|none`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--install-missing`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
-| `init [folder]` | as `setup`, plus `--name <name>`, `--base <branch>` | Link a folder's repository as a project, or replace the settings of one already linked. |
+| `init [folder]` | `--terminal warp\|apple-terminal`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--name <name>`, `--base <branch>`, `--yes` | Link a folder's repository as a project, or replace the settings of one already linked. |
 | `deinit [folder]` | `--yes` | Unlink a project's folder; sessions in use stay. |
 | `status` | | Print the sessions of every project. |
 | `reopen [name]` | `--project <name>` | Open a closed session again, back online in the app. Without a name, list the closed ones. |
@@ -622,131 +536,18 @@ porchlight doctor
 porchlight status
 ```
 
-`doctor` first checks this Mac: whether Claude Code is signed in (it asks
-`claude auth status`, reads only whether someone is, and prints no account detail) and,
-once a project is configured, whether the service's login agent is loaded. Then it checks,
-for each project, only what its features need: the folder, Claude Code, git, tmux, the
-terminal, the git repository, the base branch, the permission mode and, with `server`,
-whether the server's login agent is loaded. An agent that is not loaded is fixed with
-`porchlight start`; one whose file is missing, with `porchlight apply`. Each line is `ok`,
-`missing`, `problem` or `unknown` (what could not be found out), with what to do; the exit
-code is 1 when something is `missing` or a `problem`.
+`doctor` checks this Mac and, for each project, only what its features need, with what to
+do about each problem; its exit code is 1 when something is missing or wrong. What it
+prints, the logs, and these common problems are in [Troubleshooting
+porchlight](docs/troubleshooting.md):
 
-```text
-This Mac
-  ok       Claude Code sign-in
-  ok       service agent io.github.alejandrovdev.porchlight
-
-shop
-  ok       folder ~/Projects/shop
-  ok       Claude Code (claude) at ~/.local/bin/claude
-  ok       git at /usr/bin/git
-  ok       tmux at /opt/homebrew/bin/tmux
-  ok       Warp, the terminal its tabs open in
-  ok       git repository
-  problem  base branch: none could be determined: set `base` for the project in the configuration
-  ok       permission mode "manual"
-  problem  server agent io.github.alejandrovdev.porchlight.server.shop: not loaded: run `porchlight start`
-```
-
-**Logs** are in `~/Library/Logs/porchlight/`: `<project>.log` for what happens to a
-project's sessions, tabs and worktrees, `agent.service.log` for the service, and
-`agent.server.<project>.log` for a server. A message that repeats the last one is not
-written again.
-
-```sh
-tail -f ~/Library/Logs/porchlight/shop.log
-```
-
-**The login agents**: `launchctl print` shows one agent, its state and its last exit; it
-fails when the agent is not loaded.
-
-```sh
-launchctl print gui/$(id -u)/io.github.alejandrovdev.porchlight
-launchctl print gui/$(id -u)/io.github.alejandrovdev.porchlight.server.shop
-launchctl list | grep alejandrovdev.porchlight
-```
-
-An agent that is not loaded comes back with `porchlight start`; one that has no file, with
-`porchlight apply`.
-
-### No ready session appears in the app
-
-- `porchlight status` should list a `free` session with a pid. If it lists none, check that
-  the project has `ready-session`, that `doctor` passes, and that the service is loaded
-  (above).
-- Read the project's log. `no worktree for ...` names the git problem; with
-  `no base branch is known`, set `base` for the project, or record the default branch of
-  `origin` with `git remote set-head origin --auto`. After `no free session started (N in a
-  row)`, porchlight waits before trying again: two minutes after the first failure, twice as
-  long after each next one, at most an hour. `status` then says, under the project's ready
-  sessions, how many attempts failed and when the next one comes. Once the cause is fixed,
-  `porchlight retry --project <name>` clears the wait. It starts nothing itself and does not
-  wake the service: the service tries at its next pass, within 20 seconds.
-- If the session runs but `status` says `not in the app yet`, its transcript does not name a
-  Remote Control session yet. Check that Claude Code is signed in and that your plan
-  includes Remote Control.
-
-### A tab does not open
-
-- The project needs `tabs`, and the configuration a terminal: `terminal = "warp"` or
-  `terminal = "apple-terminal"`. Warp must be installed (`doctor` looks for it in
-  `/Applications` and `~/Applications`); Terminal comes with macOS.
-- The terminal must be running: porchlight never starts it. The tab opens at the next pass
-  once it runs.
-- With Terminal, porchlight opens each window through AppleScript, so macOS asks once
-  whether it may control Terminal. If that was refused, the log says
-  `failed to open a tab ... Not authorized to send Apple events to Terminal`: allow it in
-  System Settings, Privacy & Security, Automation.
-- With Terminal, a window whose session ended stays open, showing `[Process completed]`,
-  when its profile says so. To have it close, set Terminal, Settings, Profiles, your
-  profile, Shell, "When the shell exits" to "Close if the shell exited cleanly" or
-  "Close the window". porchlight does not change your Terminal settings.
-- After three failed attempts the session keeps running without a tab, driven from the app,
-  and no tab is tried again for it. `status` marks it `hidden` and prints, below it, the
-  command that attaches to it in a terminal. The log says `no tab opened for ... (attempt N)`.
-- For the server's sessions, `status` says `tab open`, `no tab yet` or
-  `tab closed by the user`. A view tab you closed is not opened again; open the view
-  yourself with `porchlight view <project> <session>`.
-
-### A closed tab leaves the session listed in the app
-
-- Closing a session's tab ends the session on the Mac, but the app keeps it listed until you
-  archive it there: porchlight cannot archive a session from the Mac.
-- Unarchiving a session in the app reaches nothing on the Mac. To bring it back, ask a ready
-  session to reopen it by name (the `reopen` feature), or run `porchlight reopen <name>` on
-  the Mac.
-
-### A session archived in the app keeps running
-
-- porchlight ends only the sessions it started (ready and reopened ones), never a session
-  you started yourself, and only while the service runs: it reads the archive in the
-  session's transcript and ends the process at its next pass. Check that the service is
-  loaded; once it runs again, it ends the session.
-- A session the server started ends through the server itself, not through porchlight.
-
-### `/resume` does not list the server's sessions
-
-- The project needs `resume-list` (which needs `server`).
-- The copies are kept in the session folder of the repository's top folder: run `claude` in
-  that folder, not in a worktree, and use `/resume` there.
-- That folder exists only once Claude Code has run a session in the repository's top folder.
-  Until then porchlight makes no copy.
-- `porchlight resume-list sync` brings the copies up to date and prints, for each one, the
-  command that resumes it.
-
-### The Mac sleeps
-
-- Turn on `keep-awake` for a project. It works while the service runs, on AC power and on
-  battery unless `setup` set it to `Only on AC power` (`keep_awake = "plugged-in"`); the
-  display still sleeps. On battery, closing the lid still puts the Mac to sleep. `pmset -g assertions` lists `caffeinate` while it holds the Mac
-  awake.
-- While the Mac sleeps, nothing on it runs, so the app cannot reach its sessions.
-
-### A server uses an old permission mode
-
-A running server keeps the mode it started with. Restart it with `porchlight apply --servers`
-(its sessions end). See [Running and stopping](#running-and-stopping).
+- [No ready session appears in the app](docs/troubleshooting.md#no-ready-session-appears-in-the-app)
+- [A tab does not open](docs/troubleshooting.md#a-tab-does-not-open)
+- [A closed tab leaves the session listed in the app](docs/troubleshooting.md#a-closed-tab-leaves-the-session-listed-in-the-app)
+- [A session archived in the app keeps running](docs/troubleshooting.md#a-session-archived-in-the-app-keeps-running)
+- [`/resume` does not list the server's sessions](docs/troubleshooting.md#resume-does-not-list-the-servers-sessions)
+- [The Mac sleeps](docs/troubleshooting.md#the-mac-sleeps)
+- [A server uses an old permission mode](docs/troubleshooting.md#a-server-uses-an-old-permission-mode)
 
 ## Uninstall
 
@@ -772,7 +573,8 @@ A running server keeps the mode it started with. Restart it with `porchlight app
      refuses while a session or a server still runs. When it says that porchlight did not
      make a folder, it left that folder whole: look at what is in it and remove it yourself.
 
-   To remove everything at once: `porchlight uninstall --servers --purge`.
+   To remove everything at once, once no session runs (close the tabs of the sessions you
+   use first): `porchlight uninstall --servers --purge`.
 
 3. Remove the command and the tap. Do this after `porchlight uninstall`: the login agents
    run the installed command.
@@ -850,3 +652,7 @@ starts, with folders and files made absolute. The rehearsal is still real where 
 `start` load agents into your launchd under the label you chose, and its sessions use your
 Claude Code account and the repository you link. End it with
 `porchlight uninstall --servers --purge` under the same variables.
+
+## License
+
+porchlight is released under the [MIT License](LICENSE).
