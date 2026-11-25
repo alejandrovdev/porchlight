@@ -100,7 +100,9 @@ With the `server` feature on, you can also create new sessions on this Mac from 
    they cannot be read, you type one.
 4. **Default features**: a checklist of the [features](#features-and-presets). Turning one
    on turns on what it needs; turning one off turns off what needs it, and says why.
-5. **Summary**: what is about to be saved, and `Save this configuration?`. `y` saves it;
+5. **Keep the Mac awake**: `On AC power and on battery` (the default) or `Only on AC
+   power`. Asked only when the default features or a linked project have `keep-awake`.
+6. **Summary**: what is about to be saved, and `Save this configuration?`. `y` saves it;
    `n` changes nothing.
 
 ### What `init` asks
@@ -339,7 +341,8 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
   not go to sleep while idle, on AC power or on battery (`caffeinate -i -s`). The display
   still sleeps. On battery, closing the lid still puts the Mac to sleep: macOS decides
   that, so keep the lid open or the Mac plugged in. On battery it drains the battery
-  faster.
+  faster. To keep it awake on AC power only (`caffeinate -s`), choose `Only on AC power`
+  in `setup`, or set `keep_awake = "plugged-in"`; the service picks up the change by itself.
 
 ## Configuration
 
@@ -377,6 +380,7 @@ features = ["server", "resume-list"]
 | Key | Type | Rules |
 | --- | --- | --- |
 | `terminal` | text | The app tabs open in. Only `"warp"` today. Required when any project has `tabs`. |
+| `keep_awake` | text | Optional. When `keep-awake` holds the Mac awake: `"always"` (the default: on AC power and on battery) or `"plugged-in"` (on AC power only). One setting for the Mac. |
 | `[defaults]` | table | Optional. What `init` starts from for a new project. |
 | `[projects.<name>]` | table | One per project. |
 
@@ -435,7 +439,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 
 | Command | Flags | What it does |
 | --- | --- | --- |
-| `setup` | `--terminal warp`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--yes` | Set up this Mac once: the terminal and what new projects start from. |
+| `setup` | `--terminal warp`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
 | `init [folder]` | as `setup`, plus `--name <name>`, `--base <branch>` | Link a folder's repository as a project, or replace the settings of one already linked. |
 | `deinit [folder]` | `--yes` | Unlink a project's folder; sessions in use stay. |
 | `status` | | Print the sessions of every project. |
@@ -644,8 +648,8 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
 ### The Mac sleeps
 
 - Turn on `keep-awake` for a project. It works while the service runs, on AC power and on
-  battery; the display still sleeps. On battery, closing the lid still puts the Mac to
-  sleep. `pmset -g assertions` lists `caffeinate` while it holds the Mac
+  battery unless `setup` set it to `Only on AC power` (`keep_awake = "plugged-in"`); the
+  display still sleeps. On battery, closing the lid still puts the Mac to sleep. `pmset -g assertions` lists `caffeinate` while it holds the Mac
   awake.
 - While the Mac sleeps, nothing on it runs, so the app cannot reach its sessions.
 

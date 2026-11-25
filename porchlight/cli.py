@@ -201,14 +201,20 @@ def parser():
         added.add_argument("--servers", action="store_true", help=what)
         return added
 
-    answered(
+    setting_up = answered(
         command(
             "setup",
             setup,
             "Set up this Mac once: terminal and project defaults.",
             details="Set up porchlight on this Mac once: check what the features need, choose the terminal tabs "
-            "open in, and the permission mode and features new projects start from. Installs nothing.",
+            "open in, the permission mode and features new projects start from, and whether keep-awake holds "
+            "the Mac awake on battery too. Installs nothing.",
         )
+    )
+    setting_up.add_argument(
+        "--keep-awake",
+        choices=config.KEEP_AWAKE,
+        help="when keep-awake holds the Mac awake: always (on battery too) or plugged-in (on AC power only)",
     )
     linking_folder = answered(
         command(

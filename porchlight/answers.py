@@ -18,14 +18,16 @@ from pathlib import Path
 
 from . import config
 
-PREREQUISITES, TERMINAL, MODE, FEATURES, NAME, CONFIRM = (
+PREREQUISITES, TERMINAL, MODE, FEATURES, KEEP_AWAKE, NAME, CONFIRM = (
     "prerequisites",
     "terminal",
     "permission_mode",
     "features",
+    "keep_awake",
     "name",
     "confirm",
 )
+KEEP_AWAKE_TITLES = {"always": "On AC power and on battery", "plugged-in": "Only on AC power"}
 NAME_SHAPE = "a project's name has lowercase letters, digits and hyphens, at most 32"
 FIRST = "recommended"  # the preset the features start from when nothing was chosen
 
@@ -38,13 +40,23 @@ def setup_answers(configuration):
         TERMINAL: configuration.terminal,
         MODE: defaults.permission_mode,
         FEATURES: defaults.features or config.PRESETS[FIRST],
+        KEEP_AWAKE: config.keep_awake(configuration),
     }
 
 
+def needs_keep_awake(configuration, answers):
+    """Whether setup asks when to keep the Mac awake: the default features or a linked
+    project have keep-awake."""
+    return config.keep_awake_wanted(configuration, answers.get(FEATURES) or ())
+
+
 def with_setup(configuration, answers):
-    """The configuration with setup's answers: its projects as they were."""
+    """The configuration with setup's answers: its projects as they were. The keep-awake
+    setting is written only when it is not the default, "always"."""
     defaults = config.Defaults(answers[MODE], config.ordered(answers[FEATURES]))
-    return dataclasses.replace(configuration, terminal=answers[TERMINAL], defaults=defaults)
+    chosen = answers.get(KEEP_AWAKE) or config.keep_awake(configuration)
+    awake = None if chosen == config.KEEP_AWAKE[0] else chosen
+    return dataclasses.replace(configuration, terminal=answers[TERMINAL], defaults=defaults, keep_awake=awake)
 
 
 def init_answers(configuration, existing, suggested):
@@ -149,6 +161,8 @@ def setup_summary(configuration, answers):
         "Default permission mode: %s" % answers[MODE],
         "Default features: %s" % ", ".join(config.ordered(answers[FEATURES])),
     ]
+    if needs_keep_awake(configuration, answers):
+        lines.append("Keep the Mac awake: %s" % KEEP_AWAKE_TITLES[answers[KEEP_AWAKE]][0].lower() + KEEP_AWAKE_TITLES[answers[KEEP_AWAKE]][1:])
     if configuration.projects:
         names = ", ".join(project.name for project in configuration.projects)
         lines.append("Projects: %s. Their agents are brought up to date; a running server is left as it is." % names)

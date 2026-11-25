@@ -3,6 +3,7 @@
 One TOML file that `setup` and `init` write and a person may edit by hand:
 
     terminal = "warp"
+    keep_awake = "plugged-in"    # optional: "always" (the default) or "plugged-in"
 
     [defaults]
     permission_mode = "manual"
@@ -67,6 +68,8 @@ PRESETS = {
 }
 
 TERMINALS = ("warp",)
+# When keep-awake holds the Mac awake: on AC power and on battery, or on AC power only.
+KEEP_AWAKE = ("always", "plugged-in")
 TOOLS = ("claude", "git", "tmux", "terminal")
 
 PROJECT_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$")
@@ -114,6 +117,7 @@ class Config:
     terminal: Optional[str] = None
     projects: tuple = ()
     defaults: Defaults = Defaults()
+    keep_awake: Optional[str] = None  # None: "always"
 
     def project(self, name):
         return next((project for project in self.projects if project.name == name), None)
@@ -242,8 +246,11 @@ def parse(text):
         problems.append(("terminal", "must be text"))
     elif terminal is not None and terminal not in TERMINALS:
         problems.append(("terminal", 'unknown terminal "%s"; one of: %s' % (terminal, ", ".join(TERMINALS))))
+    awake = data.get("keep_awake")
+    if awake is not None and awake not in KEEP_AWAKE:
+        problems.append(("keep_awake", 'unknown value "%s"; one of: %s' % (awake, ", ".join(KEEP_AWAKE))))
     for key in data:
-        if key not in ("terminal", "defaults", "projects"):
+        if key not in ("terminal", "keep_awake", "defaults", "projects"):
             problems.append((key, "unknown key"))
     defaults = defaults_from(data.get("defaults", {}), problems)
     tables = data.get("projects", {})
@@ -274,7 +281,17 @@ def parse(text):
                 break
     if problems:
         raise ConfigError(problems)
-    return Config(terminal, tuple(projects), defaults)
+    return Config(terminal, tuple(projects), defaults, awake)
+
+
+def keep_awake(config):
+    """When keep-awake holds the Mac awake: "always" unless the configuration says otherwise."""
+    return config.keep_awake or KEEP_AWAKE[0]
+
+
+def keep_awake_wanted(config, features=()):
+    """Whether anything asks for keep-awake: these features, or a linked project's."""
+    return "keep-awake" in features or any(project.has("keep-awake") for project in config.projects)
 
 
 def quoted(value):
@@ -295,6 +312,8 @@ def dump(config):
     lines = []
     if config.terminal:
         lines.append("terminal = %s" % quoted(config.terminal))
+    if config.keep_awake:
+        lines.append("keep_awake = %s" % quoted(config.keep_awake))
     defaults = config.defaults
     if defaults.permission_mode is not None or defaults.features is not None:
         if lines:

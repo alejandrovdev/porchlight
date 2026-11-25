@@ -92,16 +92,42 @@ class Linking(unittest.TestCase):
 
 class Setup(Linking):
     def test_asks_the_prerequisites_the_terminal_the_mode_the_features_and_a_summary(self):
-        keys = standins.Keys(ENTER, ENTER, DOWN, DOWN, DOWN, ENTER, ENTER, "y")
+        keys = standins.Keys(ENTER, ENTER, DOWN, DOWN, DOWN, ENTER, ENTER, ENTER, "y")
 
         self.assertEqual(self.run_cli("setup", keys=keys), 0)
 
         self.assertEqual(
-            keys.titles(), ["Prerequisites", "Terminal", "Default permission mode", "Default features", "Summary"]
+            keys.titles(),
+            ["Prerequisites", "Terminal", "Default permission mode", "Default features", "Keep the Mac awake", "Summary"],
         )
         self.assertEqual(self.saved(), config.Config("warp", (), config.Defaults("manual", config.PRESETS["recommended"])))
         self.assertEqual(self.mac.launchctl.did(), [], "no project: nothing to load")
         self.assertEqual(self.printed[-1], "Next: in a project's folder, run: porchlight init")
+
+    def test_asks_when_to_keep_the_mac_awake_once_a_default_feature_or_a_project_has_keep_awake(self):
+        keys = standins.Keys(ENTER, ENTER, ENTER, ENTER, DOWN, ENTER, "y")
+
+        self.assertEqual(self.run_cli("setup", keys=keys), 0)
+
+        self.assertEqual(
+            keys.titles(),
+            ["Prerequisites", "Terminal", "Default permission mode", "Default features", "Keep the Mac awake", "Summary"],
+        )
+        self.assertEqual([item.value for item in keys.last("Keep the Mac awake").items], ["always", "plugged-in"])
+        self.assertEqual(self.saved().keep_awake, "plugged-in")
+        self.assertIn("Keep the Mac awake: only on AC power", keys.last("Summary").body)
+
+    def test_keep_awake_is_not_asked_when_nothing_has_the_feature(self):
+        self.assertEqual(self.run_cli("setup", "--feature", "server", "--terminal", "warp", "--permission-mode", "plan", "--yes"), 0)
+
+        self.assertIsNone(self.saved().keep_awake, "nothing chosen: nothing written")
+
+    def test_the_keep_awake_flag_answers_its_screen(self):
+        self.assertEqual(self.run_cli("setup", "--terminal", "warp", "--permission-mode", "plan", "--keep-awake", "plugged-in", "--yes"), 0)
+        self.assertEqual(self.saved().keep_awake, "plugged-in")
+
+        self.assertEqual(self.run_cli("setup", "--yes"), 0)
+        self.assertEqual(self.saved().keep_awake, "plugged-in", "a later setup starts from it")
 
     def test_the_prerequisites_are_the_doctor_checks_of_each_tool_and_terminal_app_and_nothing_is_installed(self):
         del self.mac.found["tmux"]
@@ -144,7 +170,7 @@ class Setup(Linking):
 
     def test_modes_that_cannot_be_read_are_typed(self):
         del self.mac.outputs[CLAUDE_HELP]
-        keys = standins.Keys(ENTER, ENTER, "p", "l", "a", "n", ENTER, ENTER, "y")
+        keys = standins.Keys(ENTER, ENTER, "p", "l", "a", "n", ENTER, ENTER, ENTER, "y")
 
         self.assertEqual(self.run_cli("setup", keys=keys), 0)
 
@@ -174,7 +200,7 @@ class Setup(Linking):
         agents.apply(configuration, self.mac, lambda line: None)
         self.mac.found["tmux"] = "/elsewhere/bin/tmux"  # every definition changes
         self.mac.launchctl.calls.clear()
-        keys = standins.Keys(ENTER, ENTER, ENTER, ENTER, "y")
+        keys = standins.Keys(ENTER, ENTER, ENTER, ENTER, ENTER, "y")
 
         self.assertEqual(self.run_cli("setup", keys=keys), 0)
 
@@ -188,7 +214,7 @@ class Setup(Linking):
         for keys in (
             standins.Keys("q"),
             standins.Keys(ENTER, CTRL_C),
-            standins.Keys(ENTER, ENTER, ENTER, ENTER, "n"),
+            standins.Keys(ENTER, ENTER, ENTER, ENTER, ENTER, "n"),
         ):
             self.printed.clear()
 

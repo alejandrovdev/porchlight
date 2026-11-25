@@ -26,6 +26,16 @@ def terminal(apps, asked=lambda given: True):
     return Screen(answers.TERMINAL, "--terminal", make)
 
 
+def keep_awake(asked=lambda given: True):
+    """When keep-awake holds the Mac awake; asked only when `asked(answers so far)`."""
+    items = tuple(Item(value, answers.KEEP_AWAKE_TITLES[value]) for value in config.KEEP_AWAKE)
+
+    def make(given):
+        return Choice.of("Keep the Mac awake", items, given.get(answers.KEEP_AWAKE)) if asked(given) else None
+
+    return Screen(answers.KEEP_AWAKE, "--keep-awake", make)
+
+
 def permission_mode(title, modes):
     """A choice of the modes Claude Code lists, or a field to type one when they could not
     be read."""

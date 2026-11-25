@@ -66,12 +66,12 @@ class Service(unittest.TestCase):
         self.passes = []  # the projects of each pass
         self.macs = []  # the configuration of each Mac asked for
 
-    def configure(self, *projects, features=("server",)):
+    def configure(self, *projects, features=("server",), keep_awake=None):
         configured = []
         for name in projects:
             (self.root / name).mkdir(exist_ok=True)
             configured.append(config.Project(name, str(self.root / name), "plan", config.ordered(features), None, name))
-        config.save(config.Config(None, tuple(configured)), self.file)
+        config.save(config.Config(None, tuple(configured), keep_awake=keep_awake), self.file)
 
     def a_pass(self, configuration, mac):
         self.passes.append([project.name for project in configuration.projects])
@@ -343,6 +343,26 @@ class KeepAwake(Service):
         self.serve(QUIET)
 
         self.assertEqual(self.children(), [(["/usr/bin/caffeinate", "-i", "-s", "-w", "4242"], True)])
+
+    def test_plugged_in_keeps_it_awake_on_ac_power_only(self):
+        self.configure("shop", features=self.AWAKE, keep_awake="plugged-in")
+
+        self.serve(QUIET)
+
+        self.assertEqual(self.children(), [(["/usr/bin/caffeinate", "-s", "-w", "4242"], True)])
+
+    def test_a_new_keep_awake_setting_replaces_the_child(self):
+        self.configure("shop", features=self.AWAKE)
+
+        self.serve(change(lambda: self.configure("shop", features=self.AWAKE, keep_awake="plugged-in")))
+
+        self.assertEqual(
+            self.children(),
+            [
+                (["/usr/bin/caffeinate", "-i", "-s", "-w", "4242"], True),
+                (["/usr/bin/caffeinate", "-s", "-w", "4242"], True),
+            ],
+        )
 
     def test_one_pass_alone_starts_none(self):
         self.configure("shop", features=self.AWAKE)

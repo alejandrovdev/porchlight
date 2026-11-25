@@ -92,7 +92,7 @@ def serve(
             if mac is None:
                 mac = mac_for(configuration)
             if not once:
-                awake.keep(keep_awake.wanted(configuration), mac, say)
+                awake.keep(keep_awake.wanted(configuration), mac, say, config.keep_awake(configuration))
             try:
                 a_pass(configuration, mac)
             except Exception as error:  # the next round tries again

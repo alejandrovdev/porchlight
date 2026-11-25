@@ -57,6 +57,20 @@ features = ["keep-awake", "server"]
         self.assertTrue(blog.has("server"))
         self.assertFalse(blog.has("tabs"))
 
+    def test_keep_awake_is_on_battery_too_unless_it_says_plugged_in(self):
+        self.assertIsNone(config.parse(ONE).keep_awake)
+        self.assertEqual(config.keep_awake(config.parse(ONE)), "always")
+        parsed = config.parse('keep_awake = "plugged-in"\n' + ONE)
+        self.assertEqual(parsed.keep_awake, "plugged-in")
+        self.assertEqual(config.keep_awake(parsed), "plugged-in")
+        self.assertEqual(config.parse(config.dump(parsed)), parsed, "it is written back")
+
+    def test_an_unknown_keep_awake_is_a_problem(self):
+        self.assertIn(
+            ("keep_awake", 'unknown value "sometimes"; one of: always, plugged-in'),
+            problems('keep_awake = "sometimes"\n' + ONE),
+        )
+
     def test_a_file_without_projects_is_valid_and_empty(self):
         self.assertEqual(config.parse("").projects, ())
 

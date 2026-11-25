@@ -93,12 +93,14 @@ def setup(chosen, configuration, mac, out, asker):
         answers.TERMINAL: chosen.terminal,
         answers.MODE: given_mode(chosen, modes),
         answers.FEATURES: given_features(chosen),
+        answers.KEEP_AWAKE: chosen.keep_awake,
     }
     steps = [
         screens.prerequisites(doctor.prerequisites(mac)),
         screens.terminal([mac.terminal_app(name) for name in config.TERMINALS]),
         screens.permission_mode("Default permission mode", modes),
         screens.features("Default features"),
+        screens.keep_awake(lambda given: answers.needs_keep_awake(configuration, given)),
         screens.confirm("Save this configuration?", lambda given: answers.setup_summary(configuration, given)),
     ]
     got = asked(asker, steps, answers.setup_answers(configuration), flags, chosen.yes)
