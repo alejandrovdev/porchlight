@@ -225,7 +225,7 @@ class StandInMac(Mac):
     def terminal_app(self, name):
         return self.apps[name]
 
-    def output(self, words):
+    def output(self, words, any_exit=False):
         self.asked.append(list(words))
         return self.outputs.get(" ".join(words))
 

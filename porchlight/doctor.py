@@ -34,10 +34,7 @@ INSTALL = {
 MODE_OPTION = "--permission-mode"
 THIS_MAC = "This Mac"  # the heading of the checks that are no project's
 SIGN_IN = "Claude Code sign-in"
-SIGN_IN_ASKED = ("auth", "status", "--json")
-# `claude auth status` exits 1 when no one is signed in, and `mac.output` reads only what a
-# command that ended well prints: a shell runs it and always ends well, so its answer is read.
-EVEN_WHEN_IT_FAILS = ("/bin/sh", "-c", '"$0" "$@"; exit 0')
+SIGN_IN_ASKED = ("auth", "status", "--json")  # it exits 1 when no one is signed in
 
 
 @dataclass(frozen=True)
@@ -139,7 +136,7 @@ def signed_in(text):
 
 
 def sign_in_check(claude, mac):
-    said = signed_in(mac.output(list(EVEN_WHEN_IT_FAILS) + [claude] + list(SIGN_IN_ASKED)))
+    said = signed_in(mac.output([claude] + list(SIGN_IN_ASKED), any_exit=True))
     if said is None:
         return Check(UNKNOWN, SIGN_IN, "`claude auth status` could not say")
     if not said:

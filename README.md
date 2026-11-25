@@ -511,6 +511,8 @@ You do not need to type `run` or `server`: the login agents run them.
 - **porchlight never reads Claude Code's credentials and never calls Claude's servers.** It
   makes no network connection of its own. It reads the process list, git, its own files and
   the transcripts Claude Code writes in `~/.claude/projects` for the projects you linked.
+  To say whether you are signed in, `doctor` asks `claude auth status` and keeps only its
+  yes or no: no account detail is printed or stored.
 - **It runs as the person who is logged in and refuses root.** `setup`, `init`, `deinit`,
   `apply`, `start`, `stop`, `uninstall`, `run` and `server` answer `Run this as the person
   who is logged in, without sudo: root has other agents. Nothing was changed.`

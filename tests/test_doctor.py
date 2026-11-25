@@ -30,7 +30,7 @@ Options:
 MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 # What asks the installed Claude Code whether someone is signed in. It exits 1 when no one
 # is, so a shell runs it and always ends well: its answer is read either way.
-SIGN_IN = ["/bin/sh", "-c", '"$0" "$@"; exit 0', "/tools/claude", "auth", "status", "--json"]
+SIGN_IN = ["/tools/claude", "auth", "status", "--json"]
 # As `claude auth status --json` answers, with made-up account details doctor never prints.
 ACCOUNT = {"email": "someone@example.com", "orgName": "Example Org", "orgId": "org-0000", "planTier": "plan-x"}
 SIGNED_IN = json.dumps(dict(ACCOUNT, loggedIn=True, authMethod="claude.ai", apiProvider="firstParty"))
