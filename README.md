@@ -304,11 +304,15 @@ The Remote Control server gives each of its sessions a worktree too,
 project with `server`, porchlight removes such a worktree by the same rule, once no process
 runs its session and neither the worktree nor its transcript has changed for 10 minutes:
 only when it is clean (nothing changed, nothing untracked) and its HEAD is on the base
-branch. Otherwise it is unlocked and left, and the project's log says why, once. Its branch
-was made by Claude Code and is never deleted. porchlight checks each one once after its
-session ended, and again only when something in it or in the repository's branches
-changed. It touches nothing else of the server: a folder of another name, one git does not
-list as a worktree of the repository, and any case git cannot answer are left as they are.
+branch. Otherwise it is unlocked and left, and the project's log says why. A locked one is
+looked at only when Claude Code locked it (its lock reason starts with `claude `) and no
+process that reason names still runs; any other lock is left as it is, still locked, and
+the log says so. Its branch was made by Claude Code and is never deleted. porchlight checks
+each one once after its session ended, and again only when something in it or in the
+repository's branches changed, or when the process that held its lock ended; the log says
+why a worktree is left only when that reason is new. It touches nothing else of the
+server: a folder of another name, one git does not list as a worktree of the repository,
+and any case git cannot answer are left as they are.
 
 The base branch is the project's `base`, else the default branch git recorded for the
 repository's `origin`, else, for a repository without `origin`, the branch its main
@@ -332,7 +336,8 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
 - **`server`**: the app creates sessions in the repository through Claude Code's Remote
   Control server, each in its own worktree, `.claude/worktrees/bridge-cse_<id>`. Once a
   session ended, porchlight removes its worktree if it is clean and its HEAD is on the base
-  branch, and leaves it otherwise, saying why in the project's log (see
+  branch, and leaves it otherwise, saying why in the project's log; a worktree locked by
+  anything but an ended Claude Code process is left locked (see
   [How it works](#how-it-works)). The worktree's branch stays.
 - **`ready-session`**: the session waits hidden in porchlight's own tmux server
   (`tmux -L porchlight`), apart from any tmux you run. Its name in the app starts with the

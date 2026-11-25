@@ -3,6 +3,7 @@ project (`test_passes` has the pass over a whole configuration). Nothing is star
 program that would replace this one is a stand-in."""
 
 import json
+import os
 import shutil
 import tempfile
 import time
@@ -171,6 +172,7 @@ class BridgeWorktrees(unittest.TestCase):
         self.listed = None  # the folders git lists as worktrees; None: every bridge folder
         self.status = ""  # what `git status --porcelain` prints in a worktree
         self.on_base = True
+        self.locks = {}  # folder: the reason of its lock, as `git worktree lock --reason` took it
         self.mac.git_runner.answers = self.git
 
     def tearDown(self):
@@ -189,7 +191,11 @@ class BridgeWorktrees(unittest.TestCase):
             else:
                 folders = self.listed
             blocks = ["worktree %s\nHEAD 1234\nbranch refs/heads/main\n" % self.repository]
-            blocks += ["worktree %s\nHEAD 1234\nbranch refs/heads/worktree-%s\n" % (f, f.name) for f in folders]
+            for f in folders:
+                block = "worktree %s\nHEAD 1234\nbranch refs/heads/worktree-%s\n" % (f, f.name)
+                if f in self.locks:
+                    block += ("locked %s" % self.locks[f]).rstrip() + "\n"
+                blocks.append(block)
             return standins.result(stdout="\n".join(blocks) + "\n")
         if asked[:1] == ["symbolic-ref"]:
             return standins.result(stdout="origin/main\n")
@@ -209,6 +215,21 @@ class BridgeWorktrees(unittest.TestCase):
     def tidy(self, times=1):
         for _ in range(times):
             passes.run_project(self.project, self.mac)
+
+    def new_branch(self, name):
+        """A branch made in the repository, as `git branch <name> main` writes it."""
+        heads = self.repository / ".git" / "refs" / "heads"
+        heads.mkdir(parents=True, exist_ok=True)
+        (heads / name).write_text("1234\n")
+        later = heads.stat().st_mtime + 5
+        os.utime(heads, (later, later))  # however fast the test runs, the folder changed
+
+    def something_else_is_logged(self):
+        """Another line in the project's log: the log itself skips only a repeat of its last line."""
+        self.mac.log(self.project, "opened the tab of aaaaaaaa (Fix)")
+
+    def log_count(self, line):
+        return self.mac.log_text(self.project).count(line)
 
     def test_an_ended_clean_worktree_on_the_base_is_removed(self):
         worktree = self.bridge()
@@ -332,6 +353,109 @@ class BridgeWorktrees(unittest.TestCase):
 
         self.assertFalse(worktree.exists())
         self.assertEqual(len(self.asked("status")), 2)
+
+    def test_a_new_branch_checks_a_kept_worktree_again_without_saying_why_again(self):
+        worktree = self.bridge()
+        self.status = "?? notes.txt\n"
+        self.new_branch("main")
+        self.tidy(times=2)
+        self.something_else_is_logged()
+
+        self.new_branch("unrelated-branch")
+        self.tidy()
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(len(self.asked("status")), 2, "checked again: its commits may have reached the base")
+        self.assertEqual(self.log_count("kept the worktree bridge-%s (it has changes)" % ENDED), 1)
+        self.assertEqual(self.log_count("bridge-%s" % ENDED), 1, "nothing else is said of it")
+        kept = self.mac.store(self.project, server.WORKTREES).load({})
+        self.assertEqual(kept["bridge-" + ENDED]["said"], "kept the worktree bridge-%s (it has changes)" % ENDED)
+
+    def test_a_new_reason_to_keep_a_worktree_is_said(self):
+        worktree = self.bridge()
+        self.status = "?? notes.txt\n"
+        self.tidy()
+        self.status, self.on_base = "", False
+        (worktree / "x").write_text("")  # something in it changed
+        (worktree / "x").unlink()
+        later = worktree.stat().st_mtime + 5
+        os.utime(worktree, (later, later))
+
+        self.tidy(times=2)
+
+        self.assertEqual(self.log_count("kept the worktree bridge-%s (it has changes)" % ENDED), 1)
+        self.assertEqual(self.log_count("kept the worktree bridge-%s (its commits are not on origin/main)" % ENDED), 1)
+
+    def test_a_new_branch_does_not_say_again_that_git_does_not_list_a_folder(self):
+        worktree = self.bridge()
+        self.listed = []
+        self.tidy()
+        self.something_else_is_logged()
+
+        self.new_branch("unrelated-branch")
+        self.tidy()
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(len(self.asked("worktree", "list")), 2)
+        self.assertEqual(self.log_count("left bridge-%s: git does not list it as a worktree" % ENDED), 1)
+
+    def test_a_worktree_locked_by_anything_but_claude_code_is_left_locked_and_logged_once(self):
+        for reason, said in (
+            ("someone keeps it", " (someone keeps it)"),
+            ("porchlight shop session aaaaaaaa", " (porchlight shop session aaaaaaaa)"),
+            ("claudette (pid 1)", " (claudette (pid 1))"),
+            ("", ""),
+        ):
+            with self.subTest(reason=reason):
+                self.tearDown()
+                self.setUp()
+                worktree = self.bridge()
+                self.locks[worktree] = reason
+
+                self.tidy(times=2)
+                self.something_else_is_logged()
+                self.new_branch("unrelated-branch")
+                self.tidy()
+
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual(self.asked("worktree", "unlock"), [], "never unlocked")
+                self.assertEqual(self.asked("worktree", "remove"), [])
+                self.assertEqual(self.asked("status"), [], "nothing is asked of a worktree someone holds")
+                self.assertEqual(self.log_count("left bridge-%s: it is locked%s\n" % (ENDED, said)), 1)
+                self.assertEqual(self.log_count("bridge-%s" % ENDED), 1)
+
+    def test_a_clean_worktree_on_the_base_locked_by_a_claude_code_process_that_ended_is_removed(self):
+        worktree = self.bridge()
+        self.locks[worktree] = "claude agent agent-a1b2c3 (pid 4242 start Wed Nov 25 10:00:00 2026)"
+        self.mac.ps = "4243 /usr/bin/other\n"
+
+        self.tidy()
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual([call[-1] for call in self.asked("worktree", "unlock")], [str(worktree)])
+        self.assertEqual([call[-1] for call in self.asked("worktree", "remove")], [str(worktree)])
+        self.assertIn("removed the worktree bridge-%s" % ENDED, self.mac.log_text(self.project))
+
+    def test_a_worktree_locked_by_a_claude_code_process_that_runs_is_left_until_it_ends(self):
+        worktree = self.bridge()
+        reason = "claude agent agent-a1b2c3 (pid 4242 start Wed Nov 25 10:00:00 2026)"
+        self.locks[worktree] = reason
+        self.mac.ps = "4242 /usr/local/bin/claude --agent\n"
+
+        self.something_else_is_logged()
+        self.new_branch("unrelated-branch")
+        self.tidy()
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(self.asked("worktree", "unlock"), [])
+        self.assertEqual(self.asked("worktree", "remove"), [])
+        self.assertEqual(self.log_count("left bridge-%s: it is locked (%s)\n" % (ENDED, reason)), 1)
+
+        self.mac.ps = ""  # the process that held it ended, nothing else changed
+        self.tidy()
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual([call[-1] for call in self.asked("worktree", "unlock")], [str(worktree)])
 
 if __name__ == "__main__":
     unittest.main()

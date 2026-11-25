@@ -363,12 +363,13 @@ def tidy(project, record, mac):
         record["branch"] = tidied[1]
 
 
-def tidy_worktree(project, path, mac):
+def tidy_worktree(project, path, mac, log=None):
     """Remove a worktree of the project's repository whose session ended, when nothing in it
     would be lost: it is clean and its HEAD is on the base branch. Otherwise unlock it,
-    leave it and say why in the project's log. Its branch is deleted only when it was made
-    for a ready session. (what happened, its branch): "removed", "kept" or "failed"; None
-    when the folder is not there."""
+    leave it and say why in the project's log, or to `log` when one is given. Its branch is
+    deleted only when it was made for a ready session. (what happened, its branch):
+    "removed", "kept" or "failed"; None when the folder is not there."""
+    say = log or (lambda line: mac.log(project, line))
     repository = names.repository(project)
     name = Path(path).name
     if not Path(path).is_dir():
@@ -383,15 +384,15 @@ def tidy_worktree(project, path, mac):
             why = NO_BASE
         else:
             why = "it has changes" if merged else "its commits are not on %s" % base
-        mac.log(project, "kept the worktree %s (%s)" % (name, why))
+        say("kept the worktree %s (%s)" % (name, why))
         return "kept", branch
     removed = worktrees.remove(mac.git, repository, path)
     if removed.returncode != 0:
-        mac.log(project, "could not remove the worktree %s: %s" % (name, removed.stderr.strip()[:300]))
+        say("could not remove the worktree %s: %s" % (name, removed.stderr.strip()[:300]))
         return "failed", branch
     if names.owns_branch(project, branch):
         worktrees.delete_branch(mac.git, repository, branch)
-    mac.log(project, "removed the worktree %s" % name)
+    say("removed the worktree %s" % name)
     return "removed", branch
 
 
