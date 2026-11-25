@@ -1,4 +1,4 @@
-# porchlight
+# ![porchlight](docs/images/header.png)
 
 Leave a light on for your phone: porchlight keeps Claude Code sessions ready on your Mac so
 you can start, follow and close them from the Claude mobile app.
