@@ -92,6 +92,15 @@ otherwise it is left where it is for you to pick up, and the project's log says 
 Closing a session's tab ends the session; it then counts as closed, and `reopen` brings it
 back.
 
+If the repository has a `.worktreeinclude` file at its top level, a new session's worktree
+gets a copy of the files it lists before the session starts, as Claude Code does for the
+worktrees it creates. The file uses `.gitignore` patterns, and only files git ignores are
+copied, such as `.env` or local settings; tracked files are in the worktree already. A
+pattern naming a folder copies the ignored files in it. Symbolic links, anything under
+`.claude/worktrees/` and anything that would land outside the worktree are skipped, and a
+file the worktree already has is left alone. The project's log says how many files were
+copied, and names any it could not copy; the session starts either way.
+
 The Remote Control server gives each of its sessions a worktree too,
 `.claude/worktrees/bridge-cse_<id>`, and leaves it there when the session ends. For a
 project with `server`, porchlight removes such a worktree by the same rule, once no process
