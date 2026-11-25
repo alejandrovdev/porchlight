@@ -39,7 +39,8 @@ in use is followed until it ends, so the app still archives it and its worktree 
 tidied. Without `tabs` a session in use gets no tab and the terminal is never looked for:
 it keeps running hidden, and `status` prints the command that attaches to it; a session
 that is reopened comes back hidden too, and `reopen` prints that command. Without `reopen`
-a session is told nothing about reopening and `reopen` refuses.
+a session is told nothing about reopening and `reopen` refuses. With `tabs`, a session whose
+tab failed to open three times keeps running hidden, and `status` prints that command too.
 """
 
 import calendar
@@ -274,11 +275,15 @@ def describe(session, record):
     return "%s  %-8s %s  %s" % (names.short(session), record["state"], when, label(record, session))
 
 
+def given_up(record):
+    """Whether no tab will open for a session: its tab failed too often while it stayed in
+    tmux (a reopened one runs in its tab, without tmux)."""
+    return bool(record.get("tmux")) and record.get("show_failures", 0) >= SHOW_ATTEMPTS
+
+
 def hidden(record):
-    """Whether a running session has no tab: its tab was not opened yet, or was given up on
-    while the session stayed in tmux (a reopened one runs in its tab, without tmux)."""
-    gave_up = bool(record.get("tmux")) and record.get("show_failures", 0) >= SHOW_ATTEMPTS
-    return not record.get("shown", True) or gave_up
+    """Whether a running session has no tab: its tab was not opened yet, or was given up on."""
+    return not record.get("shown", True) or given_up(record)
 
 
 def offer(text, found, closed, out):
@@ -591,8 +596,9 @@ def status(project, mac, out=print):
         else:
             where = "not running"
         out("%s  (%s)" % (describe(session, record), where))
-        if session in live and hidden(record) and record.get("tmux") and not project.has("tabs"):
-            out("    " + mac.tmux.attach(record["tmux"]))  # no tab will open: how to see it
+        no_tab_will_open = not project.has("tabs") or given_up(record)
+        if session in live and hidden(record) and record.get("tmux") and no_tab_will_open:
+            out("    " + mac.tmux.attach(record["tmux"]))  # how to see it
 
 
 def reopen_hidden(project, session, record, mac, out):

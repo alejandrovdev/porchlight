@@ -619,10 +619,8 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
 - Warp must be running: porchlight never starts it. The tab opens at the next pass once
   Warp runs.
 - After three failed attempts the session keeps running without a tab, driven from the app,
-  and `status` marks it `hidden`. The log says `no tab opened for ... (attempt N)`. You can
-  still see it in a terminal:
-  `tmux -L porchlight attach-session -t '=<project>-<short id>'`, with the short id that
-  `status` prints first.
+  and no tab is tried again for it. `status` marks it `hidden` and prints, below it, the
+  command that attaches to it in a terminal. The log says `no tab opened for ... (attempt N)`.
 - For the server's sessions, `status` says `tab open`, `no tab yet` or
   `tab closed by the user`. A view tab you closed is not opened again; open the view
   yourself with `porchlight view <project> <session>`.
