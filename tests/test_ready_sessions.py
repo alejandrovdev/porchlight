@@ -103,8 +103,8 @@ class Summarize(unittest.TestCase):
 
 
 class Plan(unittest.TestCase):
-    def plan(self, sessions, live, summaries=None, create=True, now=STARTED + 10, tabs=True):
-        return ready_sessions.plan(sessions, live, summaries or {}, create, now, tabs)
+    def plan(self, sessions, live, summaries=None, create=True, now=STARTED + 10, tabs=True, ready=True):
+        return ready_sessions.plan(sessions, live, summaries or {}, create, now, tabs, ready)
 
     def test_a_hidden_free_session_waits_without_a_tab(self):
         sessions = {A: known("free", shown=False, tmux="shop-aaaaaaaa")}
@@ -203,6 +203,35 @@ class Plan(unittest.TestCase):
         new, _ = self.plan(sessions, {B: 302}, now=STARTED + 31 * 86400)
 
         self.assertEqual(list(new), [B])
+
+    def test_with_ready_sessions_off_none_is_prepared(self):
+        self.assertEqual(self.plan({}, {}, ready=False), ({}, []))
+
+    def test_with_ready_sessions_off_a_free_session_is_ended_and_stays_known_until_it_ended(self):
+        sessions = {A: known("free", shown=False, tmux="shop-aaaaaaaa")}
+
+        self.assertEqual(self.plan(sessions, {A: 301}, {A: summary()}, ready=False), (sessions, [("release", A)]))
+
+    def test_with_ready_sessions_off_a_free_session_that_ended_is_discarded_like_any_other(self):
+        free = known("free")
+
+        self.assertEqual(self.plan({A: free}, {}, ready=False), ({}, [("discard", free)]))
+
+    def test_with_ready_sessions_off_a_session_in_use_is_followed_until_it_ends(self):
+        sessions = {A: known("used", prompt="Fix the header")}
+
+        self.assertEqual(self.plan(sessions, {A: 301}, ready=False), (sessions, []), "it is not ended")
+
+        archived, actions = self.plan(sessions, {A: 301}, {A: summary(ended_at=STARTED + 5)}, ready=False)
+        self.assertEqual((archived[A]["state"], actions), ("archived", [("stop", A)]))
+
+        _, actions = self.plan(archived, {}, ready=False)
+        self.assertEqual(actions, [("tidy", A)])
+
+    def test_with_ready_sessions_off_a_free_session_someone_just_wrote_in_is_in_use(self):
+        new, actions = self.plan({A: known("free")}, {A: 301}, {A: summary(prompt="Fix the header")}, ready=False)
+
+        self.assertEqual((new[A]["state"], actions), ("used", []))
 
 
 class Match(unittest.TestCase):

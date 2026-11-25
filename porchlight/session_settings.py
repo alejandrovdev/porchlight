@@ -3,6 +3,9 @@
 The Remote Control server records the file's checksum when it starts and refuses every
 new session once the file differs. So a change is never written over the file: it waits
 beside it, as `settings.json.next`, and is installed the next time the server starts.
+
+The file carries the project's permission mode and nothing else: every other setting is
+the person's own, in their Claude Code settings.
 """
 
 import json
@@ -11,10 +14,7 @@ from pathlib import Path
 
 
 def content(project):
-    return {
-        "permissions": {"defaultMode": project.permission_mode},
-        "disableAutoMode": "disable",
-    }
+    return {"permissions": {"defaultMode": project.permission_mode}}
 
 
 def text(project):

@@ -35,6 +35,10 @@ def default_base(git, repository):
     return name if answer.returncode == 0 and name else None
 
 
+def has_remote(git, repository, name):
+    return git(repository, "remote", "get-url", name).returncode == 0
+
+
 def branch_exists(git, repository, branch):
     return git(repository, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch).returncode == 0
 

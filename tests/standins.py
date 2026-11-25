@@ -63,9 +63,11 @@ class Terminal(terminal.Terminal):
         self.opens = opens
         self.error = error
         self.tabs = []
+        self.asked = 0  # how many times it was looked for
         self.on_open = None  # what a real tab would change, such as the process list
 
     def runs(self, ps_text):
+        self.asked += 1
         return self.running
 
     def open_tab(self, name, title, directory, command, started, attempts=1, patience=25.0):

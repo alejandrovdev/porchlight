@@ -11,6 +11,8 @@ the phone's session is never changed.
 
 A copy that was continued in the terminal is never overwritten: what the phone adds
 afterwards goes to a new copy.
+
+A project without `resume-list` gets no copy; the ones written before stay where they are.
 """
 
 import json
@@ -97,7 +99,7 @@ def sync_one(project, source, state, mac):
 
 
 def sync(project, mac):
-    if not main_folder(project, mac).is_dir():
+    if not project.has("resume-list") or not main_folder(project, mac).is_dir():
         return
     store = mac.store(project, STATE)
     with store.locked():

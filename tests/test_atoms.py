@@ -86,6 +86,14 @@ class Worktrees(unittest.TestCase):
 
         self.assertIsNone(worktrees.default_base(git, "/srv/shop"))
 
+    def test_tells_whether_the_repository_has_a_remote(self):
+        runner = standins.Runner()
+        without = standins.Runner(lambda words: standins.result(returncode=2, stderr="error: No such remote 'origin'"))
+
+        self.assertTrue(worktrees.has_remote(worktrees.Git("/tools/git", run=runner), "/srv/shop", "origin"))
+        self.assertFalse(worktrees.has_remote(worktrees.Git("/tools/git", run=without), "/srv/shop", "origin"))
+        self.assertEqual(runner.calls, [["/tools/git", "-C", "/srv/shop", "remote", "get-url", "origin"]])
+
     def test_keeps_its_worktrees_where_claude_code_keeps_a_repositorys(self):
         self.assertEqual(worktrees.folder("/srv/shop"), Path("/srv/shop/.claude/worktrees"))
         self.assertEqual(
@@ -149,6 +157,12 @@ class Tmux(unittest.TestCase):
         self.assertFalse(self.tmux(hidden).attached("shop-aaaaaaaa"))
         self.assertFalse(self.tmux(gone).attached("shop-aaaaaaaa"))
         self.assertEqual(shown.calls[0][5:], ["list-clients", "-t", "=shop-aaaaaaaa", "-F", "#{client_pid}"])
+
+    def test_the_command_that_attaches_to_a_session_is_what_a_tab_runs_without_exec(self):
+        attach = self.tmux().attach("shop-aaaaaaaa")
+
+        self.assertEqual(attach, "/tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'")
+        self.assertEqual(self.tmux().attach_command("shop-aaaaaaaa"), "exec " + attach)
 
     def test_a_shown_session_ends_with_its_tab(self):
         runner = standins.Runner()

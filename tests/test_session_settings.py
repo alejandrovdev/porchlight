@@ -23,6 +23,13 @@ class SessionSettings(unittest.TestCase):
             session_settings.content(standins.project(mode="acceptEdits"))["permissions"], {"defaultMode": "acceptEdits"}
         )
 
+    def test_carries_the_permission_mode_and_nothing_else(self):
+        self.assertEqual(
+            session_settings.content(standins.project(mode="auto")),
+            {"permissions": {"defaultMode": "auto"}},
+            "any other setting is the person's own, in their Claude Code settings",
+        )
+
     def test_the_first_time_the_file_is_written_in_place(self):
         session_settings.stage(standins.project(mode="plan"), self.path)
 

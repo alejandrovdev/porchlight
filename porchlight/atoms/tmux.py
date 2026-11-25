@@ -57,11 +57,15 @@ class Tmux:
             "%s -lic %s" % (SHELL, shlex.quote(command)),
         )  # fmt: skip
 
-    def attach_command(self, name):
-        """What a tab runs to show a session: a tmux client on that session and no other."""
+    def attach(self, name):
+        """What shows a session in a terminal: a tmux client on that session and no other."""
         # Quoted by hand: zsh takes a word that starts with = for a command to look up,
         # and shlex.quote leaves such a word as it is.
-        return "exec %s -L %s -u attach-session -t '=%s'" % (shlex.quote(self.tool), shlex.quote(self.server), name)
+        return "%s -L %s -u attach-session -t '=%s'" % (shlex.quote(self.tool), shlex.quote(self.server), name)
+
+    def attach_command(self, name):
+        """What a tab runs to show a session: the tab closes when the client ends."""
+        return "exec " + self.attach(name)
 
     def environment(self):
         return clean_environment(self.environ, self.path)

@@ -11,6 +11,8 @@ terminal tab shows.
     status(project, mac)         print the sessions and their state
     reopen(project, text, mac)   open a closed session again in a new tab, back online in
                                  the app; without a name, list the closed ones
+    reopen_anywhere(configuration, text, mac)
+                                 the same, among the closed sessions of every project
 
 One free session always waits, in its own worktree, named `<prefix>-...` in the app. It
 waits hidden: it runs in a detached session of the tool's own tmux server, so no tab stays
@@ -24,6 +26,14 @@ in its tab directly, without tmux.
 Only sessions in this project's own state are ever stopped or tidied; a session someone
 started by hand is never touched. A worktree is removed only when it is clean and its HEAD
 is on the base branch; otherwise it is unlocked and left.
+
+Three features of a project decide what happens here. Without `ready-session` no free
+session is prepared, and one that still waits from before is ended and discarded; a session
+in use is followed until it ends, so the app still archives it and its worktree is still
+tidied. Without `tabs` a session in use gets no tab and the terminal is never looked for:
+it keeps running hidden, and `status` prints the command that attaches to it. Without
+`reopen` a session is told nothing about reopening and `reopen` refuses; a session is
+reopened in a tab, so for a project without `tabs` it lists the closed ones and opens none.
 """
 
 import calendar
@@ -45,12 +55,18 @@ ARCHIVED = "Remote Control disconnected — this session was ended or archived f
 CLOSED = ("archived", "closed")
 FORGET_AFTER = 30 * 86400
 SHOW_ATTEMPTS = 3
+ORIGIN = "origin"  # the remote whose default branch a worktree starts from
+NO_BASE = "no base branch is known"
 
 
-def note():
-    """What a session is told, beside its system prompt, about reopening another."""
+def note(reopen=True):
+    """What a session is told, beside its system prompt: where it runs and, when the
+    project reopens sessions, how to reopen another."""
+    where = "This session runs on the user's Mac and is driven from the Claude mobile app."
+    if not reopen:
+        return where
     return (
-        "This session runs on the user's Mac and is driven from the Claude mobile app. "
+        where + " "
         "When the user asks to reopen a session (for example: reopen <name>) or to list the closed "
         "ones, run this with Bash and report what it prints: %s reopen <name>. Without a name it "
         "lists the closed sessions; when the name matches none or several, pick the id from that "
@@ -123,13 +139,17 @@ def summarize(entries):
     return summary
 
 
-def plan(sessions, live, summaries, create, now, tabs=True):
+def plan(sessions, live, summaries, create, now, tabs=True, ready=True):
     """Decide what to do with the known sessions: (the new records, the actions).
 
     Actions: ("stop", id) ends the process of a session the app archived, ("tidy", id)
     cleans up after a session that ended, ("discard", record) drops a free session
     nobody used, ("create",) prepares a free session, ("show", id) opens the tab of a
     hidden session that is now in use, asked only while tabs can open.
+
+    `ready` is whether a free session is kept waiting. When it is not, none is prepared
+    and ("release", id) ends the one that still waits; once it ended it is discarded like
+    any other. A session in use is followed to its end either way.
     """
     new = {}
     actions = []
@@ -149,6 +169,8 @@ def plan(sessions, live, summaries, create, now, tabs=True):
                 state = "used"
                 record["tidied"] = False
                 record["started"] = now
+            elif state == "free" and not ready:
+                actions.append(("release", session))
             elif archived or state == "archived":
                 actions.append(("stop", session))
                 if state != "free":  # an archived free session is discarded once it ends
@@ -170,7 +192,7 @@ def plan(sessions, live, summaries, create, now, tabs=True):
             record["state"] = state
             record["changed"] = now
         new[session] = record
-    if create and not any(record["state"] == "free" for record in new.values()):
+    if ready and create and not any(record["state"] == "free" for record in new.values()):
         actions.append(("create",))
     return new, actions
 
@@ -212,7 +234,7 @@ def command_line(project, session, resume, claude, settings):
         "--settings",
         str(settings),
         "--append-system-prompt",
-        note(),
+        note(project.has("reopen")),
         "--remote-control-session-name-prefix",
         project.prefix,
         "--remote-control",  # last: a word after it would be the session's name
@@ -240,6 +262,28 @@ def describe(session, record):
     return "%s  %-8s %s  %s" % (names.short(session), record["state"], when, label(record, session))
 
 
+def hidden(record):
+    """Whether a running session has no tab: its tab was not opened yet, or was given up on
+    while the session stayed in tmux (a reopened one runs in its tab, without tmux)."""
+    gave_up = bool(record.get("tmux")) and record.get("show_failures", 0) >= SHOW_ATTEMPTS
+    return not record.get("shown", True) or gave_up
+
+
+def offer(text, found, closed, out):
+    """Say why no session is reopened and list the candidates: those a name matched, else
+    every closed one. Both come as lines ready to print. 0 when the list was asked for."""
+    listed = found or closed
+    if not text.strip():
+        out("Closed sessions:" if listed else "No closed session.")
+    elif found:
+        out('Several closed sessions match "%s"; run it again with the id of one:' % text)
+    else:
+        out('No closed session matches "%s".%s' % (text, " The closed ones:" if listed else ""))
+    for line in listed:
+        out("  " + line)
+    return 0 if not text.strip() else 1
+
+
 # What follows touches the Mac, through the `mac` it is given: processes, git, tmux, the
 # terminal and the state file.
 
@@ -249,9 +293,16 @@ def transcript(session, record, mac):
 
 
 def base_branch(project, mac):
-    """Where a new worktree starts and what a finished one must be on: the project's own
-    choice, else the default branch git recorded for the repository; None when neither."""
-    return project.base or worktrees.default_base(mac.git, names.repository(project))
+    """Where a new worktree starts and what a finished one must be on. The project's own
+    choice; else the default branch git recorded for the repository's origin; else, for a
+    repository that has no origin, the branch its main checkout is on. None when all fail."""
+    if project.base:
+        return project.base
+    repository = names.repository(project)
+    stated = worktrees.default_base(mac.git, repository)
+    if stated or worktrees.has_remote(mac.git, repository, ORIGIN):
+        return stated  # an origin that states no default branch is not replaced by a guess
+    return worktrees.current_branch(mac.git, repository) or None
 
 
 def add_worktree(project, record, session, mac):
@@ -270,11 +321,7 @@ def add_worktree(project, record, session, mac):
     else:
         base = base_branch(project, mac)
         if base is None:
-            mac.log(
-                project,
-                "no worktree for %s: the repository states no default branch; set `base` for the project"
-                % names.short(session),
-            )
+            mac.log(project, "no worktree for %s: %s; set `base` for the project" % (names.short(session), NO_BASE))
             return False
         if names.owns_branch(project, branch):
             result = worktrees.add(mac.git, repository, path, reason, base, "-b", branch)
@@ -299,7 +346,7 @@ def tidy(project, record, mac):
     worktrees.unlock(mac.git, repository, path)
     if not (clean and merged):
         if base is None:
-            why = "the repository states no default branch"
+            why = NO_BASE
         else:
             why = "it has changes" if merged else "its commits are not on %s" % base
         mac.log(project, "kept the worktree %s (%s)" % (name, why))
@@ -313,13 +360,13 @@ def tidy(project, record, mac):
     mac.log(project, "removed the worktree %s" % name)
 
 
-def stop(project, session, pid, mac):
-    """End the process of a session, which closes its tab."""
+def stop(project, session, pid, mac, why="archived from the app"):
+    """End the process of a session, which closes its tab or its hidden tmux session."""
     if running(mac.processes()).get(session) != pid:
         return
     try:
         mac.terminate(pid)
-        mac.log(project, "stopped %s (pid %d): archived from the app" % (names.short(session), pid))
+        mac.log(project, "stopped %s (pid %d): %s" % (names.short(session), pid, why))
     except OSError as error:
         mac.log(project, "could not stop %s (pid %d): %r" % (names.short(session), pid, error))
 
@@ -415,7 +462,10 @@ def save_state(store, state):
 
 
 def reconcile(project, mac):
+    ready, tabs = project.has("ready-session"), project.has("tabs")
     store = mac.store(project, STATE)
+    if not ready and not store.path.exists():
+        return  # the feature is off and holds nothing
     with store.locked():
         state = load_state(store)
         for _ in range(4):  # an action changes what the next pass sees
@@ -429,14 +479,18 @@ def reconcile(project, mac):
                         transcript(session, record, mac), state["read"].get(session, 0)
                     )
                     summaries[session] = summarize(entries)
-            may_create = mac.clock() >= state["retry_after"]
+            may_create = ready and mac.clock() >= state["retry_after"]
             # Never start the terminal: a session in use gets its tab once the terminal runs.
+            # A project without tabs does not even look for it.
+            may_show = tabs and terminal_runs(ps_text, mac)
             state["sessions"], actions = plan(
-                state["sessions"], live, summaries, may_create, mac.clock(), terminal_runs(ps_text, mac)
+                state["sessions"], live, summaries, may_create, mac.clock(), may_show, ready
             )
             for action in actions:
                 if action[0] == "stop":
                     stop(project, action[1], live[action[1]], mac)
+                elif action[0] == "release":
+                    stop(project, action[1], live[action[1]], mac, "the ready session is turned off")
                 elif action[0] == "tidy":
                     tidy(project, state["sessions"][action[1]], mac)
                 elif action[0] == "discard":
@@ -462,32 +516,35 @@ def status(project, mac, out=print):
         record = state["sessions"][session]
         if session in live:
             where = "pid %d, %s" % (live[session], record["cse"] or "not in the app yet")
-            where += "" if record.get("shown", True) else ", hidden"
+            where += ", hidden" if hidden(record) else ""
         else:
             where = "not running"
         out("%s  (%s)" % (describe(session, record), where))
+        if session in live and hidden(record) and record.get("tmux") and not project.has("tabs"):
+            out("    " + mac.tmux.attach(record["tmux"]))  # no tab will open: how to see it
 
 
 def reopen(project, text, mac, out=print):
-    """Open a closed session again; 0 when it is open or the list was asked for."""
+    """Open a closed session of a project again; 0 when it is open or the list was asked for."""
+    if not project.has("reopen"):
+        out('The project "%s" does not have the feature "reopen". Nothing was reopened.' % project.name)
+        return 1
     store = mac.store(project, STATE)
     with store.locked():
         state = load_state(store)
         sessions = state["sessions"]
         found = match(sessions, text)
         if not text.strip() or len(found) != 1:
-            listed = found or match(sessions, "")
-            if not text.strip():
-                out("Closed sessions:" if listed else "No closed session.")
-            elif found:
-                out('Several closed sessions match "%s"; run it again with the id of one:' % text)
-            else:
-                out('No closed session matches "%s".%s' % (text, " The closed ones:" if listed else ""))
-            for session in listed:
-                out("  " + describe(session, sessions[session]))
-            return 0 if not text.strip() else 1
+            lines = {session: describe(session, sessions[session]) for session in match(sessions, "")}
+            return offer(text, [lines[session] for session in found], list(lines.values()), out)
         session = found[0]
         record = sessions[session]
+        if not project.has("tabs"):
+            out(
+                'A session is reopened in a tab, and the project "%s" does not have the feature "tabs". '
+                "Nothing was reopened." % project.name
+            )
+            return 1
         if mac.terminal is None:
             out("No terminal is set up for tabs. Nothing was reopened.")
             return 1
@@ -508,7 +565,43 @@ def reopen(project, text, mac, out=print):
         save_state(store, state)
         mac.log(project, "reopened %s (%s)" % (names.short(session), label(record, session)))
         out(
-            'Reopened "%s" in a new tab on the Mac. It comes back online in the Claude app, as the '
-            "same session, within a few seconds." % label(record, session)
+            'Reopened "%s" (project %s) in a new tab on the Mac. It comes back online in the Claude app, '
+            "as the same session, within a few seconds." % (label(record, session), project.name)
         )
         return 0
+
+
+def reopen_anywhere(configuration, text, mac, out=print):
+    """Open a closed session again, looked for in every project that reopens sessions.
+
+    Exactly one match is reopened, in its own project. With none or several, or without a
+    name, the candidates are listed, each with the project it belongs to. 0 when a session
+    is open again or the list was asked for.
+    """
+    projects = [project for project in configuration.projects if project.has("reopen")]
+    if not projects:
+        out('No project has the feature "reopen". Nothing was reopened.')
+        return 1
+    found, closed = [], []
+    for project in projects:
+        sessions = load_state(mac.store(project, STATE))["sessions"]
+        matching = match(sessions, text)
+        for session in match(sessions, ""):
+            candidate = (-sessions[session]["changed"], project.name, session, sessions[session])
+            closed.append(candidate)
+            if session in matching:
+                found.append(candidate)
+    if text.strip() and len(found) == 1:
+        _, name, session, _ = found[0]
+        # Asked of its project by its whole id, which is read again there, under the lock.
+        return reopen(configuration.project(name), session, mac, out)
+    width = max((len(name) for _, name, _, _ in closed), default=0)
+
+    def lines(candidates):
+        """Each candidate with its project, the latest first."""
+        return [
+            "%-*s  %s" % (width, name, describe(session, record))
+            for _, name, session, record in sorted(candidates, key=lambda candidate: candidate[:3])
+        ]
+
+    return offer(text, lines(found), lines(closed), out)

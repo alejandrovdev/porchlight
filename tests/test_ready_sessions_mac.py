@@ -7,13 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from porchlight import names
+from porchlight import config, names
 from porchlight.atoms import tools
 from porchlight.features import ready_sessions
 from tests import standins
 
 A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 Z = "ffffffff-ffff-4fff-8fff-ffffffffffff"
 ARCHIVED = {
     "type": "system",
@@ -57,19 +58,34 @@ class OnTheMac(unittest.TestCase):
     def git(self, **replies):
         self.mac.git_runner.answers = answering(**replies)
 
-    def worktree(self, session=A, make=True):
-        path = self.repository / ".claude" / "worktrees" / names.worktree(self.project, session)
+    def having(self, *features):
+        """The project with these features only."""
+        return standins.project("shop", self.project.path, mode="plan", prefix="Shop", features=features)
+
+    def another(self, name, prefix, mode="acceptEdits", features=None):
+        (Path(self.scratch.name) / name).mkdir()
+        return standins.project(name, str(Path(self.scratch.name) / name), mode=mode, prefix=prefix, features=features)
+
+    def running_until_ended(self, ps_text):
+        """A process list that loses each process once it was ended."""
+        self.mac.ps = lambda: "".join(
+            line + "\n" for line in ps_text.splitlines() if int(line.split()[0]) not in self.mac.terminated
+        )
+
+    def worktree(self, session=A, make=True, project=None):
+        project = project or self.project
+        path = names.repository(project) / ".claude" / "worktrees" / names.worktree(project, session)
         if make:
             path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def record(self, state="used", session=A, **extra):
+    def record(self, state="used", session=A, project=None, **extra):
         record = {
             "state": state,
             "started": self.mac.now,
             "changed": self.mac.now,
-            "worktree": str(self.worktree(session, make=False)),
-            "branch": names.branch(self.project, session),
+            "worktree": str(self.worktree(session, make=False, project=project)),
+            "branch": names.branch(project or self.project, session),
             "prompt": "",
             "title": "",
             "cse": "",
@@ -80,12 +96,12 @@ class OnTheMac(unittest.TestCase):
         record.update(extra)
         return record
 
-    def save(self, sessions, **extra):
+    def save(self, sessions, project=None, **extra):
         state = dict({"sessions": sessions, "read": {}, "failures": 0, "retry_after": 0}, **extra)
-        self.mac.store(self.project, ready_sessions.STATE).save(state)
+        self.mac.store(project or self.project, ready_sessions.STATE).save(state)
 
-    def saved(self):
-        return self.mac.store(self.project, ready_sessions.STATE).load({})
+    def saved(self, project=None):
+        return self.mac.store(project or self.project, ready_sessions.STATE).load({})
 
     def transcript(self, session, record, *entries):
         path = self.mac.transcripts / re.sub(r"[^A-Za-z0-9]", "-", record["worktree"]) / (session + ".jsonl")
@@ -122,6 +138,20 @@ class Note(unittest.TestCase):
         self.assertIn(" --remote-control-session-name-prefix Blog ", command, "the prefix is the project's")
         self.assertIn(" --settings /state/settings.json ", command)
 
+    def test_without_reopen_the_note_says_nothing_of_reopening(self):
+        note = ready_sessions.note(reopen=False)
+
+        self.assertNotIn("reopen", note.lower())
+        self.assertIn("driven from the Claude mobile app", note)
+
+    def test_a_project_without_reopen_tells_its_sessions_nothing_of_it(self):
+        project = standins.project("blog", "/srv/blog", features=("ready-session", "tabs"))
+
+        command = ready_sessions.command_line(project, A, False, "/tools/claude", "/state/settings.json")
+
+        self.assertNotIn("reopen", command.lower())
+        self.assertIn(" --append-system-prompt ", command, "it is still told where it runs")
+
 
 class BaseBranch(OnTheMac):
     def test_a_new_worktree_starts_from_the_default_branch_git_states(self):
@@ -152,6 +182,51 @@ class BaseBranch(OnTheMac):
 
         self.assertFalse(ready_sessions.add_worktree(self.project, self.record("free"), A, self.mac))
 
+        self.assertEqual(self.mac.git_runner.having("worktree", "add"), [])
+        self.assertIn("base", self.mac.log_text(self.project))
+
+    def test_without_an_origin_a_new_worktree_starts_from_the_branch_of_the_main_checkout(self):
+        self.git(
+            symbolic_ref=standins.result(returncode=1),
+            remote=standins.result(returncode=2, stderr="error: No such remote 'origin'"),
+            branch=standins.result(stdout="trunk\n"),
+            rev_parse=standins.result(returncode=1),
+        )
+        record = self.record("free")
+
+        self.assertTrue(ready_sessions.add_worktree(self.project, record, A, self.mac))
+
+        (added,) = self.mac.git_runner.having("worktree", "add")
+        self.assertEqual(added[-4:], ["-b", "porchlight-shop-aaaaaaaa", record["worktree"], "trunk"])
+        (asked,) = self.mac.git_runner.having("branch", "--show-current")
+        self.assertEqual(asked[2], str(self.repository), "the branch of the main checkout")
+
+    def test_an_origin_that_states_no_default_branch_is_not_replaced_by_a_guess(self):
+        # `remote get-url origin` succeeds: the repository has an origin.
+        self.git(
+            symbolic_ref=standins.result(returncode=1),
+            branch=standins.result(stdout="trunk\n"),
+            rev_parse=standins.result(returncode=1),
+        )
+
+        self.assertFalse(ready_sessions.add_worktree(self.project, self.record("free"), A, self.mac))
+
+        self.assertEqual(len(self.mac.git_runner.having("remote", "get-url", "origin")), 1)
+        self.assertEqual(self.mac.git_runner.having("worktree", "add"), [])
+        self.assertIn("base", self.mac.log_text(self.project))
+
+    def test_without_an_origin_and_on_no_branch_no_worktree_is_made(self):
+        self.git(
+            symbolic_ref=standins.result(returncode=1),
+            remote=standins.result(returncode=2),
+            branch=standins.result(stdout=""),  # the main checkout is on a commit, not on a branch
+            rev_parse=standins.result(returncode=1),
+        )
+
+        self.assertFalse(ready_sessions.add_worktree(self.project, self.record("free"), A, self.mac))
+
+        self.assertEqual(len(self.mac.git_runner.having("symbolic-ref")), 1)
+        self.assertEqual(len(self.mac.git_runner.having("branch", "--show-current")), 1, "all three were tried")
         self.assertEqual(self.mac.git_runner.having("worktree", "add"), [])
         self.assertIn("base", self.mac.log_text(self.project))
 
@@ -227,6 +302,22 @@ class Tidy(OnTheMac):
         self.assertEqual(len(self.mac.git_runner.having("worktree", "unlock")), 1)
         self.assertEqual(self.mac.git_runner.having("worktree", "remove"), [])
         self.assertEqual(self.mac.git_runner.having("merge-base"), [], "nothing is compared with a guessed branch")
+
+    def test_without_an_origin_a_finished_worktree_is_compared_with_the_main_checkouts_branch(self):
+        self.worktree()
+        self.git(
+            symbolic_ref=standins.result(returncode=1),
+            remote=standins.result(returncode=2),
+            branch=lambda words: standins.result(
+                stdout="trunk\n" if words[2] == str(self.repository) else "porchlight-shop-aaaaaaaa\n"
+            ),
+        )
+        record = self.record("closed")
+
+        ready_sessions.tidy(self.project, record, self.mac)
+
+        self.assertEqual(self.mac.git_runner.having("merge-base")[0][-3:], ["--is-ancestor", "HEAD", "trunk"])
+        self.assertEqual(self.mac.git_runner.having("worktree", "remove")[0][-1], record["worktree"])
 
     def test_never_deletes_a_branch_it_did_not_make(self):
         self.worktree()
@@ -424,6 +515,77 @@ class Reconcile(OnTheMac):
         self.assertEqual(record["show_failures"], 1)
         self.assertIn("failed to open a tab", self.mac.log_text(self.project))
 
+    def test_without_ready_session_no_session_is_prepared_and_nothing_is_kept(self):
+        project = self.having("server")
+        self.git(symbolic_ref=standins.result(stdout="origin/trunk\n"), rev_parse=standins.result(returncode=1))
+        self.claude_starts()
+
+        ready_sessions.reconcile(project, self.mac)
+
+        self.assertEqual(self.mac.tmux_runner.calls, [])
+        self.assertEqual(self.mac.git_runner.calls, [])
+        self.assertFalse((Path(self.scratch.name) / "state").exists(), "a feature that is off holds nothing")
+
+    def test_ready_session_turned_off_ends_the_free_session_it_held_and_nothing_more(self):
+        project = self.having("server")
+        used = self.record("used", prompt="Fix the header", shown=False, tmux="shop-aaaaaaaa")
+        free = self.record("free", B, shown=False, tmux="shop-bbbbbbbb")
+        self.save({A: used, B: free})
+        self.worktree(B)
+        self.git(
+            symbolic_ref=standins.result(stdout="origin/trunk\n"),
+            branch=standins.result(stdout=free["branch"] + "\n"),
+        )
+        # Z is a session someone started by hand, with Remote Control: it is not ours.
+        self.running_until_ended(
+            f"301 claude --session-id {A} --remote-control\n"
+            f"302 claude --session-id {B} --remote-control\n"
+            f"303 claude --session-id {Z} --remote-control\n"
+        )
+
+        ready_sessions.reconcile(project, self.mac)
+
+        self.assertEqual(self.mac.terminated, [302], "the free session, and only it")
+        self.assertEqual(self.mac.git_runner.having("worktree", "remove")[0][-1], free["worktree"])
+        self.assertEqual(self.mac.git_runner.having("branch", "-D")[0][-1], free["branch"])
+        self.assertEqual(list(self.saved()["sessions"]), [A], "the session in use stays known")
+        self.assertEqual(self.saved()["sessions"][A]["state"], "used")
+        self.assertEqual(self.mac.tmux_runner.having("new-session"), [], "no other is prepared")
+        self.assertEqual(self.terminal.tabs, [])
+        self.assertIn("stopped bbbbbbbb (pid 302): the ready session is turned off", self.mac.log_text(project))
+
+    def test_with_ready_session_off_a_session_in_use_is_still_stopped_when_archived_and_tidied(self):
+        project = self.having("server")
+        self.mac.now = ARCHIVED_AT - 100  # the session started before it was archived
+        used = self.record("used", prompt="Fix the header")
+        self.save({A: used})
+        self.transcript(A, used, ARCHIVED)
+        self.worktree(A)
+        self.git(symbolic_ref=standins.result(stdout="origin/trunk\n"))
+        self.running_until_ended(f"301 claude --resume {A} --remote-control\n")
+
+        ready_sessions.reconcile(project, self.mac)
+
+        self.assertEqual(self.mac.terminated, [301])
+        record = self.saved()["sessions"][A]
+        self.assertEqual((record["state"], record["tidied"]), ("archived", True))
+        self.assertEqual(self.mac.git_runner.having("worktree", "remove")[0][-1], used["worktree"])
+        self.assertIn("archived from the app", self.mac.log_text(project))
+
+    def test_without_tabs_a_session_in_use_keeps_running_hidden_and_the_terminal_is_never_looked_for(self):
+        project = self.having("ready-session")
+        used = self.record("used", shown=False, tmux="shop-aaaaaaaa", prompt="Fix the header")
+        self.save({A: used, B: self.record("free", B, shown=False)})
+        self.mac.ps = f"301 claude --session-id {A} --remote-control\n302 claude --session-id {B} --remote-control\n"
+
+        ready_sessions.reconcile(project, self.mac)
+
+        self.assertEqual(self.terminal.tabs, [])
+        self.assertEqual(self.terminal.asked, 0, "the terminal is not looked for")
+        self.assertFalse(self.saved()["sessions"][A]["shown"])
+        self.assertEqual(self.mac.terminated, [], "it keeps running hidden")
+        self.assertEqual(self.mac.tmux_runner.calls, [])
+
     def test_two_projects_keep_their_sessions_apart(self):
         (Path(self.scratch.name) / "blog").mkdir()
         blog = standins.project("blog", str(Path(self.scratch.name) / "blog"), mode="acceptEdits", prefix="Blog")
@@ -519,6 +681,113 @@ class Reopen(OnTheMac):
         self.assertEqual(self.printed[-1], "The tab did not start. Nothing was reopened.")
         self.assertEqual(self.saved()["sessions"][A]["state"], "closed")
 
+    def test_refuses_for_a_project_without_the_feature_and_names_it(self):
+        project = self.having("ready-session", "tabs")
+        self.save({A: self.record("closed", title="Header on phones", tidied=True)})
+
+        self.assertEqual(ready_sessions.reopen(project, "header", self.mac, out=self.printed.append), 1)
+        self.assertEqual(ready_sessions.reopen(project, "", self.mac, out=self.printed.append), 1)
+
+        refusal = 'The project "shop" does not have the feature "reopen". Nothing was reopened.'
+        self.assertEqual(self.printed, [refusal, refusal])
+        self.assertEqual(self.terminal.tabs, [])
+        self.assertEqual(self.saved()["sessions"][A]["state"], "closed")
+
+    def test_opens_no_tab_for_a_project_without_tabs_and_still_lists_its_closed_sessions(self):
+        project = self.having("ready-session", "reopen")
+        self.save({A: self.record("closed", title="Header on phones", tidied=True)})
+
+        self.assertEqual(ready_sessions.reopen(project, "header", self.mac, out=self.printed.append), 1)
+
+        self.assertEqual(
+            self.printed,
+            ['A session is reopened in a tab, and the project "shop" does not have the feature "tabs". '
+             "Nothing was reopened."],
+        )  # fmt: skip
+        self.assertEqual((self.terminal.tabs, self.terminal.asked), ([], 0))
+        self.assertEqual(self.mac.git_runner.calls, [])
+
+        self.assertEqual(ready_sessions.reopen(project, "", self.mac, out=self.printed.append), 0)
+        self.assertEqual(self.printed[1], "Closed sessions:")
+
+
+class ReopenAnywhere(OnTheMac):
+    """One search over every project that has `reopen`."""
+
+    def setUp(self):
+        super().setUp()
+        self.blog = self.another("blog", "Blog")
+        self.docs = self.another("docs", "Docs", features=("ready-session", "tabs"))  # without reopen
+        self.configuration = config.Config("warp", (self.project, self.blog, self.docs))
+        self.save({A: self.record("closed", title="Header on phones", tidied=True, changed=self.mac.now - 60)})
+        self.save(
+            {B: self.record("archived", B, self.blog, prompt="Fix the footer", tidied=True)}, project=self.blog
+        )
+        self.save({C: self.record("closed", C, self.docs, prompt="Fix the index", tidied=True)}, project=self.docs)
+
+    def reopen(self, text, configuration=None):
+        return ready_sessions.reopen_anywhere(
+            configuration or self.configuration, text, self.mac, out=self.printed.append
+        )
+
+    def test_without_a_name_lists_the_closed_sessions_of_every_project_that_has_it(self):
+        self.assertEqual(self.reopen(""), 0)
+
+        self.assertEqual(self.printed[0], "Closed sessions:")
+        self.assertRegex(self.printed[1], r"^  blog  bbbbbbbb  archived .* Fix the footer$")
+        self.assertRegex(self.printed[2], r"^  shop  aaaaaaaa  closed .* Header on phones$")
+        self.assertEqual(len(self.printed), 3, "a project without the feature is not searched")
+        self.assertEqual(self.terminal.tabs, [])
+
+    def test_reopens_the_one_session_that_matches_and_says_whose_it_is(self):
+        self.git(rev_parse=standins.result(returncode=0))
+        self.terminal.on_open = lambda tab: setattr(self.mac, "ps", f"601 claude --resume {B} --remote-control\n")
+
+        self.assertEqual(self.reopen("footer"), 0)
+
+        (tab,) = self.terminal.tabs
+        self.assertEqual(tab.name, "porchlight_ready_blog-bbbbbbbb")
+        self.assertEqual(tab.title, "Blog · Fix the footer")
+        self.assertIn(f" --resume {B} ", tab.command)
+        self.assertIn(" --permission-mode acceptEdits ", tab.command, "with its own project's mode")
+        (added,) = self.mac.git_runner.having("worktree", "add")
+        self.assertEqual(added[2], str(names.repository(self.blog)), "in its own project's repository")
+        self.assertEqual(self.printed, [
+            'Reopened "Fix the footer" (project blog) in a new tab on the Mac. It comes back online in the '
+            "Claude app, as the same session, within a few seconds."
+        ])  # fmt: skip
+        self.assertEqual(self.saved(self.blog)["sessions"][B]["state"], "used")
+        self.assertEqual(self.saved()["sessions"][A]["state"], "closed", "the other project is left as it was")
+
+    def test_lists_the_candidates_with_their_project_when_several_match(self):
+        self.assertEqual(self.reopen("e"), 1)
+
+        self.assertEqual(self.printed[0], 'Several closed sessions match "e"; run it again with the id of one:')
+        self.assertRegex(self.printed[1], r"^  blog  bbbbbbbb  ")
+        self.assertRegex(self.printed[2], r"^  shop  aaaaaaaa  ")
+        self.assertEqual(len(self.printed), 3)
+        self.assertEqual(self.terminal.tabs, [])
+
+        self.git(rev_parse=standins.result(returncode=0))
+        self.terminal.on_open = lambda tab: setattr(self.mac, "ps", f"601 claude --resume {A} --remote-control\n")
+        self.assertEqual(self.reopen("aaaaaaaa"), 0, "the id of one of them settles it")
+        self.assertEqual(self.terminal.tabs[0].name, "porchlight_ready_shop-aaaaaaaa")
+
+    def test_lists_every_closed_session_with_its_project_when_none_matches(self):
+        self.assertEqual(self.reopen("index"), 1, "a session of a project without the feature is not found")
+
+        self.assertEqual(self.printed[0], 'No closed session matches "index". The closed ones:')
+        self.assertRegex(self.printed[1], r"^  blog  bbbbbbbb  ")
+        self.assertRegex(self.printed[2], r"^  shop  aaaaaaaa  ")
+        self.assertEqual(len(self.printed), 3)
+        self.assertEqual(self.terminal.tabs, [])
+
+    def test_refuses_when_no_project_has_the_feature_and_names_it(self):
+        self.assertEqual(self.reopen("index", config.Config("warp", (self.docs,))), 1)
+
+        self.assertEqual(self.printed, ['No project has the feature "reopen". Nothing was reopened.'])
+        self.assertEqual(self.terminal.tabs, [])
+
 
 class Status(OnTheMac):
     def test_prints_each_session_with_its_state(self):
@@ -535,6 +804,45 @@ class Status(OnTheMac):
         self.assertEqual(len(self.printed), 2)
         self.assertRegex(self.printed[0], r"^aaaaaaaa  used .* Header on phones  \(pid 301, cse_01AAA, hidden\)$")
         self.assertRegex(self.printed[1], r"^bbbbbbbb  closed .* Fix the footer  \(not running\)$")
+
+    def test_without_tabs_prints_the_command_that_attaches_to_each_running_session_without_a_tab(self):
+        project = self.having("ready-session")
+        self.save(
+            {
+                A: self.record("used", title="Header on phones", shown=False, tmux="shop-aaaaaaaa"),
+                # Its tab was given up on while tabs were on: it runs hidden all the same.
+                B: self.record("used", B, shown=True, show_failures=3, tmux="shop-bbbbbbbb", changed=self.mac.now - 30),
+                # Reopened in a tab after that, while tabs were on: it runs in that tab, without tmux.
+                C: self.record("used", C, shown=True, show_failures=3, tmux="", changed=self.mac.now - 60),
+                Z: self.record("closed", Z, shown=False, tmux="shop-ffffffff", changed=self.mac.now - 90),
+            }
+        )
+        self.mac.ps = "".join(
+            f"{pid} claude --session-id {session} --remote-control\n" for pid, session in ((301, A), (302, B), (303, C))
+        )
+
+        ready_sessions.status(project, self.mac, out=self.printed.append)
+
+        self.assertEqual(
+            [line for line in self.printed if line.startswith("    ")],
+            [
+                "    /tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'",
+                "    /tools/tmux -L porchlight-test -u attach-session -t '=shop-bbbbbbbb'",
+            ],
+        )
+        self.assertRegex(self.printed[0], r"^aaaaaaaa  used .*, hidden\)$")
+        self.assertEqual(self.printed[1], "    /tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'")
+        self.assertRegex(self.printed[4], r"^cccccccc  used .* \(pid 303, not in the app yet\)$")
+        self.assertEqual(len(self.printed), 6)
+        self.assertEqual(self.terminal.asked, 0)
+
+    def test_with_tabs_a_hidden_session_waits_for_its_tab_and_no_command_is_printed(self):
+        self.save({A: self.record("used", title="Header on phones", shown=False, tmux="shop-aaaaaaaa")})
+        self.mac.ps = f"301 claude --session-id {A} --remote-control\n"
+
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        self.assertEqual(len(self.printed), 1)
 
     def test_says_when_there_is_none(self):
         ready_sessions.status(self.project, self.mac, out=self.printed.append)

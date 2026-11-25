@@ -10,6 +10,8 @@ itself when the session is archived, which closes the tab.
 A tab the user closes is not opened again. A tab closes only because the program it runs
 ends. Unarchiving a session in the app does not start it again on the Mac, so it opens no
 tab. The terminal is never started: the tabs open at a later pass, once it runs.
+
+A project without `live-view` gets no tab and nothing is kept for it.
 """
 
 import subprocess
@@ -113,6 +115,8 @@ def starting(project, live, mac):
 
 
 def reconcile(project, mac, wait=8.0):
+    if not project.has("live-view"):
+        return
     store = mac.store(project, STATE)
     folder = worktrees.folder(names.repository(project))
     with store.locked():

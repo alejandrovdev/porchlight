@@ -1,5 +1,6 @@
 """Tests of starting the Remote Control server of a project and of one pass over a
-project. Nothing is started: the program that would replace this one is a stand-in."""
+project (`test_passes` has the pass over a whole configuration). Nothing is started: the
+program that would replace this one is a stand-in."""
 
 import json
 import tempfile
@@ -102,7 +103,7 @@ class Pass(unittest.TestCase):
     def test_one_part_that_fails_is_logged_and_does_not_stop_the_others(self):
         steps = (self.step("first"), self.step("second", RuntimeError("broken")), self.step("third"))
 
-        passes.run(self.project, self.mac, steps)
+        passes.run_project(self.project, self.mac, steps)
 
         self.assertEqual(self.ran, [("first", "shop"), ("second", "shop"), ("third", "shop")])
         self.assertIn("second failed: RuntimeError('broken')", self.mac.log_text(self.project))

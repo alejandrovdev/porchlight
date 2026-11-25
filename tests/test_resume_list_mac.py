@@ -23,6 +23,15 @@ class OnTheMac(Scratch):
         self.assertEqual(state[SOURCE_ID]["copy"], copy.stem)
         self.assertEqual(state[SOURCE_ID]["source"], str(self.source))
 
+    def test_without_resume_list_no_copy_is_written_and_nothing_is_kept(self):
+        project = standins.project("shop", self.project.path, features=("server",))
+        self.source.write_text("".join(self.server_lines(1)))
+
+        resume_list.sync(project, self.mac)
+
+        self.assertEqual(self.copies(), [])
+        self.assertFalse((Path(self.scratch.name) / "state").exists())
+
     def test_two_projects_give_the_same_session_different_copies(self):
         blog = standins.project("blog", self.project.path)
 

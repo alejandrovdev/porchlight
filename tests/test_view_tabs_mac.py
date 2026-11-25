@@ -137,6 +137,16 @@ class Reconcile(OnTheMac):
 
         self.assertEqual(mac.store(self.project, view_tabs.STATE).load({}), {})
 
+    def test_without_live_view_a_server_session_gets_no_tab_and_nothing_is_kept(self):
+        features = ("server", "ready-session", "tabs")
+        project = standins.project("shop", self.project.path, prefix="Shop", features=features)
+        self.terminal.on_open = self.view_starts
+
+        view_tabs.reconcile(project, self.mac, wait=0)
+
+        self.assertEqual((self.terminal.tabs, self.terminal.asked), ([], 0))
+        self.assertFalse((Path(self.scratch.name) / "state").exists())
+
     def test_another_projects_session_gets_no_tab_here(self):
         (Path(self.scratch.name) / "blog").mkdir()
         blog = standins.project("blog", str(Path(self.scratch.name) / "blog"))
