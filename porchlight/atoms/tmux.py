@@ -51,17 +51,30 @@ class Tmux:
 
     def new_session(self, name, directory, command):
         """What starts a session nobody sees: a command in a detached session, run by a
-        login shell because a background service has next to no environment."""
+        login shell because a background service has next to no environment.
+
+        tmux reads the folder given with -c as a format, where #S, #{...} and #(...) stand for
+        something else, and no escape covers every case (#[ keeps a doubled #). A folder with a
+        # is reached by the shell instead, which tmux does not read as a format; one the shell
+        cannot enter runs nothing."""
+        directory = str(directory)
+        if "#" in directory:
+            start, command = [], "cd -- %s && %s" % (shlex.quote(directory), command)
+        else:
+            start = ["-c", directory]
         return self.words(
-            "-u", "new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", str(directory),
+            "-u", "new-session", "-d", "-s", name, "-x", "200", "-y", "50", *start,
             "%s -lic %s" % (SHELL, shlex.quote(command)),
         )  # fmt: skip
 
     def attach(self, name):
         """What shows a session in a terminal: a tmux client on that session and no other."""
-        # Quoted by hand: zsh takes a word that starts with = for a command to look up,
-        # and shlex.quote leaves such a word as it is.
-        return "%s -L %s -u attach-session -t '=%s'" % (shlex.quote(self.tool), shlex.quote(self.server), name)
+        # zsh takes a word that starts with = for a command to look up, and shlex.quote
+        # leaves a word of safe characters as it is: such a word is put in quotes by hand.
+        target = shlex.quote("=" + name)
+        if not target.startswith("'"):
+            target = "'%s'" % target
+        return "%s -L %s -u attach-session -t %s" % (shlex.quote(self.tool), shlex.quote(self.server), target)
 
     def attach_command(self, name):
         """What a tab runs to show a session: the tab closes when the client ends."""

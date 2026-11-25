@@ -728,6 +728,17 @@ class Init(Linking):
         self.assertEqual(self.keys.asked, 0)
         self.assertEqual(self.saved().projects, (config.Project("shop", str(shop), "plan", ("server",), "develop", "shop"),))
 
+    def test_a_base_that_git_would_take_for_an_option_is_refused_and_nothing_is_saved(self):
+        self.configure(defaults=config.Defaults("plan", ("server",)))
+        shop = self.repository("shop")
+        before = self.file.read_text()
+
+        self.assertEqual(self.run_cli("init", str(shop), "--yes", "--base=--upload-pack=touch x"), 1)
+
+        self.assertEqual(self.printed, ["projects.shop.base: must not start with -", "Nothing was changed."])
+        self.assertEqual(self.file.read_text(), before)
+        self.assertEqual(self.mac.launchctl.loaded, set())
+
     def test_without_a_terminal_a_missing_value_is_a_usage_error_naming_its_flag(self):
         shop = self.repository("shop")
         for arguments, flag in (

@@ -10,6 +10,7 @@ import json
 import shlex
 import subprocess
 import time
+import unicodedata
 from pathlib import Path
 
 
@@ -37,11 +38,22 @@ class Terminal:
         raise NotImplementedError
 
 
+def without_controls(text):
+    """Text without control characters: TOML refuses some of them unescaped (DEL), and
+    none of them belongs in a tab's title."""
+    return "".join(character for character in text if unicodedata.category(character) != "Cc")
+
+
 def tab_config(name, title, directory, command):
-    """A Warp tab configuration with one terminal that runs one command."""
+    """A Warp tab configuration with one terminal that runs one command. The title comes
+    from text typed on the phone: it loses its control characters."""
 
     def quoted(text):
-        return json.dumps(text, ensure_ascii=False)
+        # A JSON string is a valid TOML basic string once DEL, which JSON leaves as it is
+        # and TOML refuses, is escaped too.
+        return json.dumps(text, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+    title = without_controls(title)
 
     return (
         "name = %s\ntitle = %s\n\n"

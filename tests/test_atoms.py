@@ -153,6 +153,28 @@ class Tmux(unittest.TestCase):
         self.assertEqual(words[words.index("-c") + 1], "/srv/shop/w")
         self.assertEqual(shlex.split(words[-1]), ["/bin/zsh", "-lic", "exec claude --remote-control"])
 
+    def test_an_ordinary_folder_reaches_tmux_as_it_is(self):
+        words = self.tmux().new_session("shop-aaaaaaaa", "/srv/shop/w", "exec claude --remote-control")
+
+        self.assertEqual(
+            words,
+            ["/tools/tmux", "-L", "porchlight-test", "-f", "/package/tmux.conf", "-u", "new-session", "-d",
+             "-s", "shop-aaaaaaaa", "-x", "200", "-y", "50", "-c", "/srv/shop/w",
+             "/bin/zsh -lic 'exec claude --remote-control'"],
+        )  # fmt: skip
+
+    def test_a_folder_with_a_hash_is_reached_by_the_shell_not_by_tmux(self):
+        # tmux reads -c as a format: #S, #{...} and #(...) would be replaced, and doubling the
+        # # does not survive #[. The shell goes there instead; tmux reads no format in it.
+        for folder in ("/srv/shop/w#S", "/srv/shop/w#(touch x)", "/srv/#{session_name}/##", "/r/k#[draft]", "/r/l#["):
+            words = self.tmux().new_session("shop-aaaaaaaa", folder, "exec claude")
+
+            self.assertNotIn("-c", words, folder)
+            self.assertEqual(
+                shlex.split(words[-1]), ["/bin/zsh", "-lic", "cd -- %s && exec claude" % shlex.quote(folder)], folder
+            )
+            self.assertEqual(shlex.split(shlex.split(words[-1])[2])[:3], ["cd", "--", folder], folder)
+
     def test_every_command_goes_to_its_own_server_with_a_clean_environment(self):
         runner = standins.Runner()
         environ = {"HOME": "/home/x", "LANG": "C", "CLAUDE_CODE_SESSION": "leaks", "PATH": "/somewhere"}
@@ -189,6 +211,15 @@ class Tmux(unittest.TestCase):
 
         self.assertEqual(attach, "/tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'")
         self.assertEqual(self.tmux().attach_command("shop-aaaaaaaa"), "exec " + attach)
+
+    def test_the_attach_command_quotes_any_session_name(self):
+        for name in ("shop's session", "shop $(touch x)", "shop;ls", "shop `id`"):
+            attach = self.tmux().attach(name)
+
+            self.assertEqual(
+                shlex.split(attach), ["/tools/tmux", "-L", "porchlight-test", "-u", "attach-session", "-t", "=" + name], name
+            )
+            self.assertTrue(attach.endswith(shlex.quote("=" + name)), "zsh never sees a word that starts with =")
 
     def test_a_shown_session_ends_with_its_tab(self):
         runner = standins.Runner()
@@ -269,6 +300,45 @@ class Warp(unittest.TestCase):
             self.seen, [(1.5, ["porchlight_ready_shop-aaaaaaaa.toml"])], "written a moment before it is opened"
         )
         self.assertEqual(list(self.configs.iterdir()), [])
+
+    def written(self, title, directory="/srv/shop/w", command="exec x"):
+        """The configuration Warp finds when it is asked to open a tab with this title."""
+        found = []
+
+        def reading(words):
+            (config,) = self.configs.iterdir()
+            found.append(config.read_text(encoding="utf8"))
+
+        self.warp(standins.Runner(reading)).open_tab("porchlight_ready_shop-aaaaaaaa", title, directory, command, lambda: 1)
+        return found[0]
+
+    def test_an_ordinary_title_is_written_as_it_is(self):
+        self.assertEqual(
+            self.written("shop · Fix the \"cart\""),
+            'name = "porchlight_ready_shop-aaaaaaaa"\ntitle = "shop · Fix the \\"cart\\""\n\n'
+            '[[panes]]\nid = "main"\ntype = "terminal"\ndirectory = "/srv/shop/w"\ncommands = ["exec x"]\n',
+        )
+
+    def test_a_title_loses_its_control_characters_so_the_file_stays_toml(self):
+        import tomllib
+
+        text = self.written("shop\x7f · Fix\x1b[2J the\ncart\x00\x85")
+
+        self.assertEqual(
+            text,
+            'name = "porchlight_ready_shop-aaaaaaaa"\ntitle = "shop · Fix[2J thecart"\n\n'
+            '[[panes]]\nid = "main"\ntype = "terminal"\ndirectory = "/srv/shop/w"\ncommands = ["exec x"]\n',
+        )
+        self.assertEqual(tomllib.loads(text)["title"], "shop · Fix[2J thecart")
+
+    def test_a_folder_or_a_command_with_a_delete_character_reads_back_as_it_is(self):
+        import tomllib
+
+        text = self.written("t", directory="/srv/sh\x7fop", command="exec x\x7f")
+
+        self.assertIn('directory = "/srv/sh\\u007fop"', text)
+        pane = tomllib.loads(text)["panes"][0]
+        self.assertEqual((pane["directory"], pane["commands"]), ("/srv/sh\x7fop", ["exec x\x7f"]))
 
     def test_asks_again_when_the_tab_did_not_start_and_then_gives_up(self):
         runner = standins.Runner()
@@ -633,8 +703,24 @@ class Invocation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             words, environment = invocation.words("porchlight", path=scratch)
 
-        self.assertEqual(words, [sys.executable, "-m", "porchlight"])
+        self.assertEqual(words, [sys.executable, "-P", "-m", "porchlight"])
         self.assertEqual(environment, {"PYTHONPATH": str(Path(porchlight.__file__).resolve().parent.parent)})
+
+    def test_the_fallback_ignores_modules_of_the_folder_it_runs_in(self):
+        # A repository with a json.py of its own must not have it imported in its place.
+        with tempfile.TemporaryDirectory() as scratch:
+            folder = Path(scratch)
+            planted = folder / "planted"
+            (folder / "json.py").write_text("open(%r, 'w').close()\nraise SystemExit(9)\n" % str(planted))
+            words, environment = invocation.words("porchlight", path=str(folder / "nowhere"))
+
+            done = subprocess.run(
+                words + ["--version"], cwd=folder, capture_output=True, text=True, timeout=60,
+                env={"PATH": "/usr/bin:/bin", **environment},
+            )  # fmt: skip
+
+            self.assertEqual((done.returncode, done.stdout.strip()), (0, "porchlight " + porchlight.__version__), done.stderr)
+            self.assertFalse(planted.exists(), "the folder's json.py was imported")
 
     def test_a_shell_reads_the_fallback_as_one_command_even_after_exec(self):
         words, environment = ["/some where/python3", "-m", "porchlight"], {"PYTHONPATH": "/its own/folder"}

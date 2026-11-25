@@ -103,7 +103,7 @@ class TheMac(unittest.TestCase):
 
         self.assertEqual(
             shlex.split(Mac(environ={"PATH": os.devnull}).porchlight),
-            ["/usr/bin/env", "PYTHONPATH=%s" % package.parent, sys.executable, "-m", "porchlight"],
+            ["/usr/bin/env", "PYTHONPATH=%s" % package.parent, sys.executable, "-P", "-m", "porchlight"],
         )
 
     def test_what_it_hands_out_reads_the_configuration_file_and_the_folders_it_reads_itself(self):
@@ -115,7 +115,7 @@ class TheMac(unittest.TestCase):
         self.assertEqual(words[0], "/usr/bin/env")
         self.assertIn("PORCHLIGHT_CONFIG=/scratch/my config.toml", words)
         self.assertIn("PORCHLIGHT_STATE_DIR=/scratch/state", words)
-        self.assertEqual(words[-3:], [sys.executable, "-m", "porchlight"])
+        self.assertEqual(words[-4:], [sys.executable, "-P", "-m", "porchlight"])
 
     def test_what_it_hands_out_names_no_file_when_it_reads_the_default_one(self):
         with tempfile.TemporaryDirectory() as scratch:
