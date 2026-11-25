@@ -571,9 +571,42 @@ def forget_state(project, environ):
     empty(names.project_state(project, environ))
 
 
+def forget_logs(projects, environ, out):
+    """Remove every log the tool names in its log folder: those of `projects`, and by their
+    shape those of projects it no longer knows (one deinit unlinked); then the folder, once
+    nothing else is in it. Say what stays; whether every log went. Whoever calls it checked
+    that the tool made the folder (`made_here`)."""
+    root = names.log_root(environ)
+    for project in projects:
+        forget(names.log_file(project, environ))
+        forget(names.server_log(project, environ))
+    forget(names.service_log(environ))
+    try:
+        for entry in root.iterdir():
+            if names.is_log(entry.name) and not entry.is_dir():
+                forget(entry)
+    except OSError:
+        pass
+    state.release(root, names.MARKER)
+    if not root.exists():
+        return True  # the folder is gone, and every log with it
+    try:
+        left = sorted(entry for entry in root.iterdir() if entry.name != names.MARKER)
+    except OSError as error:
+        out("%s was kept: what it holds could not be read (%s)." % (root, error.strerror or error))
+        return False
+    stuck = [entry.name for entry in left if names.is_log(entry.name) and not entry.is_dir()]
+    others = [entry.name for entry in left if entry.name not in stuck]
+    if others:
+        out("%s was kept: it holds %s, which %s did not make." % (root, spoken(others), names.TOOL))
+    if stuck:
+        out("%s could not be removed from %s." % (spoken(stuck), root))
+    return not stuck
+
+
 def erase(configuration, mac, out, config_file=None, readable=True):
-    """Remove the configuration, the state and the logs, and say what was removed; whether
-    all of it was. Only the files this tool makes, one by one, and each folder only once it
+    """Remove the configuration, the state and the logs (those of every project, linked or
+    no longer), and say what was removed and what of it stays; whether all of it was. Only the files this tool makes, one by one, and each folder only once it
     is empty; and only in a state or log folder the tool made: a variable may have pointed
     it at one that holds something else, which is left whole. The configuration file is the
     one given by whoever read it, none is looked for when none is given, and one that could
@@ -599,12 +632,10 @@ def erase(configuration, mac, out, config_file=None, readable=True):
     else:
         well = False
     if made_here(names.log_root(environ), out):
-        for project in projects:
-            forget(names.log_file(project, environ))
-            forget(names.server_log(project, environ))
-        forget(names.service_log(environ))
-        state.release(names.log_root(environ), names.MARKER)
-        removed.append("the logs")
+        if forget_logs(projects, environ, out):
+            removed.append("the logs")
+        else:
+            well = False
     else:
         well = False
     out("Removed %s." % spoken(removed) if removed else "Nothing was removed.")

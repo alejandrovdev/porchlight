@@ -185,6 +185,17 @@ class Agents(unittest.TestCase):
         self.assertEqual(len(logs), 4)
         self.assertEqual({log.parent for log in logs}, {Path("/scratch/logs")})
 
+    def test_a_log_is_told_by_its_name_whatever_project_it_was_for(self):
+        """What a purge removes from the tool's log folder, configured projects or not."""
+        for name in ("shop", "web-shop", "a1"):
+            project = standins.project(name)
+            self.assertTrue(names.is_log(names.log_file(project, SCRATCH).name), name)
+            self.assertTrue(names.is_log(names.server_log(project, SCRATCH).name), name)
+        self.assertTrue(names.is_log(names.service_log(SCRATCH).name))
+        for other in ("notes.txt", "another.tool.log", "Shop.log", "shop.log.1", ".log", "agent.server..log",
+                      "agent.other.shop.log", "-shop.log", "shop", names.MARKER, "agent.service.log.old"):
+            self.assertFalse(names.is_log(other), other)
+
     def test_the_lock_of_the_service_is_in_the_state_folder(self):
         self.assertEqual(names.service_lock(SCRATCH), Path("/scratch/state/service.lock"))
 

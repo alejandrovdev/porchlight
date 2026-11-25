@@ -187,6 +187,15 @@ def server_log(project, environ=None):
     return log_root(environ) / ("agent.%s.%s.log" % (SERVER_AGENT, project.name))
 
 
+LOG_NAME = re.compile(r"(?:agent\.%s\.)?(?:%s)\.log" % (re.escape(SERVER_AGENT), PROJECT_NAME.pattern))
+
+
+def is_log(name):
+    """Whether a file name is one the tool gives a log in its log folder: the service's, or
+    a project's or its server's, whatever project it was for, configured or not."""
+    return name == service_log({}).name or LOG_NAME.fullmatch(name) is not None
+
+
 def service_lock(environ=None):
     """What the running service holds, so that there is only one."""
     return state_root(environ) / "service.lock"
