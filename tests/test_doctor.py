@@ -3,12 +3,14 @@ it. Git, the tools, the terminal, launchctl and what `claude --help`, `claude au
 and `claude --version` print are stand-ins: nothing is run."""
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from porchlight import agents, config, doctor
 from porchlight.atoms import launchd, processes
+from porchlight.features import ready_sessions
 from tests import standins
 
 # As Claude Code prints it: the choices run over several lines, and another option's
@@ -260,6 +262,61 @@ class Checks(Scratch):
             self.assertEqual((mode.state, mode.failed), ("unknown", False))
             self.assertEqual(mode.advice, "the modes `claude --help` lists could not be read")
             self.assertEqual(self.report(shop), 0)
+
+
+    def a_session_running(self, project, pane):
+        """A free session of the project, running and not in the app yet, whose pane shows
+        `pane`; None for a pane that cannot be read."""
+        session = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        record = {"state": "free", "started": self.mac.now, "changed": self.mac.now, "worktree": "/w", "branch": "",
+                  "prompt": "", "title": "", "cse": "", "tidied": False, "shown": False, "tmux": "shop-aaaaaaaa"}  # fmt: skip
+        self.mac.store(project, ready_sessions.STATE).save({"sessions": {session: record}})
+        self.mac.ps = "301 claude --session-id %s --remote-control\n" % session
+        self.mac.tmux_runner.answers = lambda words: (
+            standins.result(1, stderr="no pane") if pane is None else standins.result(stdout=pane)
+        )
+
+    def test_a_ready_session_waiting_on_the_trust_question_is_a_problem_that_says_what_to_do(self):
+        shop = self.project()
+        self.a_session_running(shop, standins.TRUST_QUESTION)
+        self.install(shop)
+
+        self.assertEqual(self.report(shop), 1)
+
+        self.assertEqual(
+            self.section("shop")[-2],
+            '  problem  ready session aaaaaaaa waits for you to trust the folder: answer "Yes, I trust this folder" '
+            "in that session (attach with the command `porchlight status` prints), and run `claude` once in %s "
+            "and trust it so the next sessions do not ask" % Path(os.path.realpath(shop.directory)),
+        )
+        self.assertEqual(self.section("shop")[-1], "  ok       server agent %s.server.shop" % standins.LABEL)
+        self.assertEqual(len(self.section("shop")), 10)
+        self.assertEqual(self.mac.tmux_runner.having("send-keys"), [], "the question is never answered")
+        self.assertEqual([call[5:] for call in self.mac.tmux_runner.calls],
+                         [["capture-pane", "-p", "-J", "-t", "=shop-aaaaaaaa:"]], "tmux is only asked")  # fmt: skip
+
+    def test_several_waiting_sessions_are_one_problem_that_names_each(self):
+        shop = self.project()
+        self.a_session_running(shop, standins.TRUST_QUESTION)
+        store = self.mac.store(shop, ready_sessions.STATE)
+        state = store.load({})
+        other = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        state["sessions"][other] = dict(state["sessions"]["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"], tmux="shop-bbbbbbbb")
+        store.save(state)
+        self.mac.ps += "302 claude --session-id %s --remote-control\n" % other
+
+        (problem,) = [check for check in self.checks(shop) if check[0] == "problem"]
+
+        self.assertEqual(problem[1], "ready sessions aaaaaaaa, bbbbbbbb wait for you to trust the folder")
+        self.assertTrue(problem[2].startswith('answer "Yes, I trust this folder" in each of those sessions (attach'))
+
+    def test_a_session_that_does_not_wait_or_whose_pane_cannot_be_read_adds_nothing(self):
+        shop = self.project()
+        before = self.checks(shop)
+
+        for pane in ("Welcome to Claude Code\n", None):
+            self.a_session_running(shop, pane)
+            self.assertEqual(self.checks(shop), before)
 
 
 class Prerequisites(Scratch):

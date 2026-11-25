@@ -197,6 +197,19 @@ class Tmux(unittest.TestCase):
 
         self.assertEqual(runner.calls[0][5:], ["set-option", "-t", "=shop-aaaaaaaa:", "destroy-unattached", "on"])
 
+    def test_reads_the_text_a_session_shows_and_knows_nothing_when_it_cannot(self):
+        shows = standins.Runner(lambda words: standins.result(stdout="Quick safety check\n"))
+        gone = standins.Runner(lambda words: standins.result(returncode=1, stderr="can't find session: shop-aaaaaaaa"))
+        stuck = standins.Runner(lambda words: subprocess.TimeoutExpired(words, 30))
+        missing = standins.Runner(lambda words: FileNotFoundError(words[0]))
+
+        self.assertEqual(self.tmux(shows).pane_text("shop-aaaaaaaa"), "Quick safety check\n")
+        self.assertEqual(shows.calls, [["/tools/tmux", "-L", "porchlight-test", "-f", "/package/tmux.conf",
+                                        "capture-pane", "-p", "-J", "-t", "=shop-aaaaaaaa:"]])  # fmt: skip
+        for runner in (gone, stuck, missing):
+            self.assertIsNone(self.tmux(runner).pane_text("shop-aaaaaaaa"), "what cannot be read is not known")
+            self.assertEqual(len(runner.calls), 1)
+
     def test_the_configuration_ships_inside_the_package(self):
         path = tmux.packaged_config()
         text = path.read_text(encoding="utf8")

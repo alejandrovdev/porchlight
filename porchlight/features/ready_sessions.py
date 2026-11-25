@@ -10,6 +10,9 @@ terminal tab shows.
                                  what ended
     status(project, mac)         print the sessions and their state, and the back-off a
                                  failed free session waits out
+    waiting_for_trust(project, mac)
+                                 the running sessions that wait on Claude Code's workspace
+                                 trust question
     retry(project, mac)          clear that back-off, so the service's next pass tries
     held(project, mac)           whether the state holds a session at all
     reopen(project, text, mac)   open a closed session again, back online in the app: in a
@@ -51,6 +54,13 @@ A free session that fails to start is tried again later: two minutes after the f
 failure, twice as long after each next one, at most an hour. `status` says when the next
 try comes, and `retry` clears the wait. Writing the state does not wake the service: the
 cleared project is tried at the service's next pass, which comes at its interval.
+
+Claude Code asks, the first time it runs in a folder nobody trusted yet, whether the person
+trusts it, and waits there: such a session never reaches the app. A running session that is
+not in the app yet has its pane read through tmux (read only: no key is sent, the question
+is never answered for the person, and none of Claude Code's own files is written). When it
+shows the question, `status` says so and prints the command that attaches to it, tabs or
+not, and the service logs it once for that session. A pane that cannot be read is not known.
 """
 
 import calendar
@@ -64,7 +74,7 @@ import uuid
 from pathlib import Path
 
 from .. import config, names, session_settings
-from ..atoms import include, processes, transcripts, worktrees
+from ..atoms import include, processes, tools, transcripts, worktrees
 
 STATE = "ready-sessions"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -75,6 +85,11 @@ FORGET_AFTER = 30 * 86400
 SHOW_ATTEMPTS = 3
 ORIGIN = "origin"  # the remote whose default branch a worktree starts from
 NO_BASE = "no base branch is known"
+# Words of Claude Code's workspace trust question, any of which tells it is asked: its
+# question ("Is this a project you created or one you trust?"), its answer ("Yes, I trust
+# this folder") and an earlier wording ("Do you trust the files in this folder?").
+TRUST_WORDS = ("one you trust", "trust this folder", "trust the files in this folder")
+WAITS_FOR_TRUST = "waiting for you to trust the folder"
 
 
 def note(porchlight="", tabs=True):
@@ -285,6 +300,22 @@ def describe(session, record):
     return "%s  %-8s %s  %s" % (names.short(session), record["state"], when, label(record, session))
 
 
+def asks_for_trust(text):
+    """Whether a pane's text shows Claude Code's workspace trust question, whatever its
+    case and however its lines break."""
+    said = " ".join((text or "").split()).casefold()
+    return any(words in said for words in TRUST_WORDS)
+
+
+def trust_advice(project, attach, where="that session"):
+    """What to do about a session that waits on the trust question; `attach` says where the
+    command that attaches to it is."""
+    return (
+        'answer "Yes, I trust this folder" in %s (%s), and run `claude` once in %s and trust it '
+        "so the next sessions do not ask" % (where, attach, names.repository(project))
+    )
+
+
 def given_up(record):
     """Whether no tab will open for a session: its tab failed too often while it stayed in
     tmux (a reopened one runs in its tab, without tmux)."""
@@ -426,6 +457,43 @@ def stop(project, session, pid, mac, why="archived from the app"):
         mac.log(project, "stopped %s (pid %d): %s" % (names.short(session), pid, why))
     except OSError as error:
         mac.log(project, "could not stop %s (pid %d): %r" % (names.short(session), pid, error))
+
+
+def pane_text(name, mac):
+    """What a tmux session shows; None when it cannot be read, tmux missing included."""
+    try:
+        return mac.tmux.pane_text(name)
+    except tools.ToolNotFound:
+        return None
+
+
+def trusting(state, live, mac):
+    """The sessions of a state whose pane shows the trust question: only those that run in
+    tmux and are not in the app yet are read. A pane that cannot be read is left out."""
+    return {
+        session
+        for session, record in state["sessions"].items()
+        if session in live
+        and not record["cse"]
+        and record.get("tmux")
+        and asks_for_trust(pane_text(record["tmux"], mac))
+    }
+
+
+def notice_trust(project, state, live, mac):
+    """Log each session the first time it is seen waiting on the trust question; True when
+    the state changed."""
+    noticed = False
+    for session in sorted(trusting(state, live, mac)):
+        record = state["sessions"][session]
+        if record.get("trust_logged"):
+            continue
+        record["trust_logged"] = True
+        noticed = True
+        attach = "`%s` prints the command that attaches to it" % names.command("status")
+        advice = trust_advice(project, attach)
+        mac.log(project, "%s waits for you to trust the folder: %s" % (names.short(session), advice))
+    return noticed
 
 
 def session_runs(session, mac):
@@ -579,6 +647,8 @@ def reconcile(project, mac):
             if not actions:
                 break
             mac.sleep(2)
+        if notice_trust(project, state, live, mac):
+            save_state(store, state)
 
 
 def free(store):
@@ -647,17 +717,28 @@ def print_sessions(project, state, mac, out):
     if not state["sessions"]:
         out("No session with Claude Code's interface yet.")
         return
+    waiting = trusting(state, live, mac)
     for session in sorted(state["sessions"], key=lambda key: -state["sessions"][key]["changed"]):
         record = state["sessions"][session]
         if session in live:
-            where = "pid %d, %s" % (live[session], record["cse"] or "not in the app yet")
+            app = WAITS_FOR_TRUST if session in waiting else record["cse"] or "not in the app yet"
+            where = "pid %d, %s" % (live[session], app)
             where += ", hidden" if hidden(record) else ""
         else:
             where = "not running"
         out("%s  (%s)" % (describe(session, record), where))
         no_tab_will_open = not project.has("tabs") or given_up(record)
-        if session in live and hidden(record) and record.get("tmux") and no_tab_will_open:
-            out("    " + mac.tmux.attach(record["tmux"]))  # how to see it
+        if session in waiting or (session in live and hidden(record) and record.get("tmux") and no_tab_will_open):
+            out("    " + mac.tmux.attach(record["tmux"]))  # how to see it, and to answer the question
+
+
+def waiting_for_trust(project, mac):
+    """The running sessions of a project that wait on Claude Code's workspace trust
+    question, in order. Only read: nothing is answered and the state is not written."""
+    state = load_state(mac.store(project, STATE))
+    if not state["sessions"]:
+        return []
+    return sorted(trusting(state, running(mac.processes()), mac))
 
 
 def retry(project, mac, out, within):

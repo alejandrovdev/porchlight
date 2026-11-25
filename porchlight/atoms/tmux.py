@@ -84,6 +84,16 @@ class Tmux:
         clients = self.run("list-clients", "-t", "=" + name, "-F", "#{client_pid}")
         return clients.returncode == 0 and bool(clients.stdout.strip())
 
+    def pane_text(self, name):
+        """What a session shows in its window, as text, wrapped lines joined; None when it
+        cannot be read: no such session, no tmux, or tmux does not answer. Only read: no key
+        reaches the session."""
+        try:
+            captured = self.run("capture-pane", "-p", "-J", "-t", "=" + name + ":")
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return captured.stdout if captured.returncode == 0 else None
+
     def kill_session(self, name):
         return self.run("kill-session", "-t", "=" + name)
 

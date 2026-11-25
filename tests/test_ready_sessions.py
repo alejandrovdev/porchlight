@@ -235,6 +235,23 @@ class Plan(unittest.TestCase):
         self.assertEqual((new[A]["state"], actions), ("used", []))
 
 
+class AsksForTrust(unittest.TestCase):
+    def test_finds_the_question_in_a_panes_text(self):
+        self.assertTrue(ready_sessions.asks_for_trust(standins.TRUST_QUESTION))
+
+    def test_survives_small_changes_of_wording_case_and_line_breaks(self):
+        for text in (
+            "Is this a project you created or one you\n   TRUST?",
+            "  1. Yes, I trust   this folder",
+            "Do you trust the files in this folder?",
+        ):
+            self.assertTrue(ready_sessions.asks_for_trust(text), text)
+
+    def test_anything_else_is_not_the_question(self):
+        for text in (None, "", "Welcome to Claude Code", "> Remote Control active", "trust me", "this folder"):
+            self.assertFalse(ready_sessions.asks_for_trust(text), text)
+
+
 class Match(unittest.TestCase):
     sessions = {
         A: known("archived", title="Header on phones", prompt="Fix the header"),
