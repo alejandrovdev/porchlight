@@ -24,3 +24,16 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Run the tests
         run: python -m unittest discover -s tests -t .
+      - name: Measure line coverage
+        # The standard library's trace module: nothing to install. Fails under 90 percent.
+        if: matrix.python == '3.15'
+        run: |
+          stdlib="$(python -c 'import sysconfig; print(sysconfig.get_paths()["stdlib"])')"
+          python -m trace --count --summary --missing --coverdir "$RUNNER_TEMP/cover" \
+            --ignore-dir "$stdlib" --module unittest discover -s tests -t . > "$RUNNER_TEMP/summary.txt" 2>&1 || true
+          echo "Least covered modules:"
+          awk '$3 ~ /^porchlight\./ && $2 ~ /%/ {print}' "$RUNNER_TEMP/summary.txt" | sort -k2 -n | head -5
+          awk '$3 ~ /^porchlight\./ && $2 ~ /%/ {lines += $1; run += $1 * $2 / 100}
+            END {if (!lines) {print "no coverage measured"; exit 1}
+                 printf "porchlight: %d lines, %.1f%% run by the tests\n", lines, 100 * run / lines
+                 exit (100 * run / lines < 90)}' "$RUNNER_TEMP/summary.txt"

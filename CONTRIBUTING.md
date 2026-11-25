@@ -21,8 +21,9 @@ python3 -m porchlight --help
 ```
 
 Python 3.11 or later, nothing to install. The tests stand in for processes, folders, tmux,
-git and the tab opener: they need no network, no Claude account and no terminal, and they
-run in a few seconds.
+git and the tab opener: they need no network, no Claude account and no terminal of yours,
+and they run in a few seconds, apart from `tests/test_terminal.py`, which runs `setup` in a
+pseudo-terminal it makes (its screens, keys, colors and resizes) and takes about ten.
 
 To try a change against the real Mac without touching an install you use, follow
 [A rehearsal apart from a real install](README.md#a-rehearsal-apart-from-a-real-install).
@@ -52,6 +53,8 @@ Keep a new piece in the lowest layer that can hold it.
 - One pull request per unit of behavior, with its tests and docs. Over about 400 changed
   lines, split it into pull requests that build on each other.
 - Continuous integration runs the tests on macOS with Python 3.11 and 3.15; both must pass.
+  On 3.15 it also measures which lines the tests run, with the standard library's `trace`,
+  lists the least covered modules, and fails under 90 percent.
 
 ## Compatibility
 
