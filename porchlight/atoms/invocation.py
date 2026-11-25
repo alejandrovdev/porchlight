@@ -2,7 +2,9 @@
 
 The installed command when PATH has one. Otherwise the interpreter that is running, with
 the tool as a module and the folder that holds its package, so that the command works from
-any folder: this is how a copy that was never installed still names itself.
+any folder: this is how a copy that was never installed still names itself. `-P` keeps the
+folder it runs in off the module path, so a repository's own `json.py` is not imported in
+place of the standard library's.
 """
 
 import os
@@ -25,7 +27,7 @@ def words(name, path=None, python=None, package=None):
     if found:
         return [os.path.abspath(found)], {}
     folder = Path(package) if package else own_package()
-    return [python or sys.executable, "-m", name], {"PYTHONPATH": str(folder.parent)}
+    return [python or sys.executable, "-P", "-m", name], {"PYTHONPATH": str(folder.parent)}
 
 
 def shell(words, environment=None):

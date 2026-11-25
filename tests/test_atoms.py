@@ -633,8 +633,24 @@ class Invocation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             words, environment = invocation.words("porchlight", path=scratch)
 
-        self.assertEqual(words, [sys.executable, "-m", "porchlight"])
+        self.assertEqual(words, [sys.executable, "-P", "-m", "porchlight"])
         self.assertEqual(environment, {"PYTHONPATH": str(Path(porchlight.__file__).resolve().parent.parent)})
+
+    def test_the_fallback_ignores_modules_of_the_folder_it_runs_in(self):
+        # A repository with a json.py of its own must not have it imported in its place.
+        with tempfile.TemporaryDirectory() as scratch:
+            folder = Path(scratch)
+            planted = folder / "planted"
+            (folder / "json.py").write_text("open(%r, 'w').close()\nraise SystemExit(9)\n" % str(planted))
+            words, environment = invocation.words("porchlight", path=str(folder / "nowhere"))
+
+            done = subprocess.run(
+                words + ["--version"], cwd=folder, capture_output=True, text=True, timeout=60,
+                env={"PATH": "/usr/bin:/bin", **environment},
+            )  # fmt: skip
+
+            self.assertEqual((done.returncode, done.stdout.strip()), (0, "porchlight " + porchlight.__version__), done.stderr)
+            self.assertFalse(planted.exists(), "the folder's json.py was imported")
 
     def test_a_shell_reads_the_fallback_as_one_command_even_after_exec(self):
         words, environment = ["/some where/python3", "-m", "porchlight"], {"PYTHONPATH": "/its own/folder"}
