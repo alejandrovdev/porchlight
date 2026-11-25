@@ -90,9 +90,10 @@ class Mac:
     def command_of(self, pid):
         return processes.command_of(pid)
 
-    def output(self, words):
-        """What a command prints, such as a tool's help; None when it cannot be run."""
-        return processes.output(words)
+    def output(self, words, any_exit=False):
+        """What a command prints, such as a tool's help; None when it cannot be run, or when
+        it fails unless `any_exit`."""
+        return processes.output(words, any_exit=any_exit)
 
     def terminate(self, pid):
         processes.terminate(pid)

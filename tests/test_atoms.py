@@ -48,6 +48,12 @@ class Processes(unittest.TestCase):
         failing = standins.Runner(lambda words: standins.result(returncode=1, stdout="half an answer"))
         self.assertIsNone(processes.output(["/tools/claude", "--help"], run=failing))
 
+    def test_reads_what_a_failing_command_prints_when_any_exit_is_asked_for(self):
+        failing = standins.Runner(lambda words: standins.result(returncode=1, stdout='{"loggedIn": false}'))
+
+        self.assertEqual(processes.output(["/tools/claude", "auth"], run=failing, any_exit=True), '{"loggedIn": false}')
+        self.assertIsNone(processes.output(["/nowhere/claude"], run=standins.Runner(lambda words: OSError("gone")), any_exit=True))
+
 
 class Transcripts(unittest.TestCase):
     def setUp(self):

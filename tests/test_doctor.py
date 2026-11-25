@@ -1,11 +1,14 @@
-"""Tests of the checks `doctor` runs: what each project's features need on this Mac. Git,
-the tools, the terminal and what `claude --help` prints are stand-ins: nothing is run."""
+"""Tests of the checks `doctor` runs: this Mac's, then what each project's features need on
+it. Git, the tools, the terminal, launchctl and what `claude --help` and `claude auth status`
+print are stand-ins: nothing is run."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from porchlight import config, doctor
+from porchlight import agents, config, doctor
+from porchlight.atoms import launchd, processes
 from tests import standins
 
 # As Claude Code prints it: the choices run over several lines, and another option's
@@ -25,6 +28,13 @@ Options:
   -v, --version                         Output the version number
 """
 MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
+# What asks the installed Claude Code whether someone is signed in. It exits 1 when no one
+# is, so a shell runs it and always ends well: its answer is read either way.
+SIGN_IN = ["/tools/claude", "auth", "status", "--json"]
+# As `claude auth status --json` answers, with made-up account details doctor never prints.
+ACCOUNT = {"email": "someone@example.com", "orgName": "Example Org", "orgId": "org-0000", "planTier": "plan-x"}
+SIGNED_IN = json.dumps(dict(ACCOUNT, loggedIn=True, authMethod="claude.ai", apiProvider="firstParty"))
+SIGNED_OUT = json.dumps({"loggedIn": False, "authMethod": "none", "apiProvider": "firstParty"})
 
 
 class PermissionModes(unittest.TestCase):
@@ -54,6 +64,7 @@ class Scratch(unittest.TestCase):
         self.mac = standins.StandInMac(self.root, self.terminal)
         self.mac.git_runner.answers = self.git
         self.mac.outputs["/tools/claude --help"] = HELP
+        self.mac.outputs[" ".join(SIGN_IN)] = SIGNED_IN
         self.repositories = True
         self.default_branch = "origin/trunk"
         self.printed = []
@@ -80,6 +91,17 @@ class Scratch(unittest.TestCase):
 
     def report(self, *projects):
         return doctor.report(config.Config("warp", projects), self.mac, out=self.printed.append)
+
+    def install(self, *projects):
+        """Write and load the agents of a configuration, as `apply` does."""
+        self.assertEqual(agents.apply(config.Config("warp", projects), self.mac, out=[].append), 0)
+        self.mac.launchctl.calls.clear()
+
+    def section(self, heading):
+        """The lines printed under a heading, up to the blank line that ends them."""
+        start = self.printed.index(heading) + 1
+        end = self.printed.index("", start) if "" in self.printed[start:] else len(self.printed)
+        return self.printed[start:end]
 
 
 class Checks(Scratch):
@@ -207,6 +229,7 @@ class Checks(Scratch):
         self.assertEqual(self.mac.asked, [["/tools/claude", "--help"]])
 
     def test_modes_that_cannot_be_read_leave_the_mode_unknown_and_fail_nothing(self):
+        self.install(self.project())
         for text in (None, "Usage: claude\n"):
             self.mac.outputs["/tools/claude --help"] = text
             shop = self.project()
@@ -220,18 +243,27 @@ class Checks(Scratch):
 
 
 class Report(Scratch):
-    def test_prints_one_line_for_each_check_under_the_projects_name_and_exits_zero(self):
+    def test_prints_this_macs_checks_then_one_line_for_each_check_under_the_projects_name_and_exits_zero(self):
         shop, blog = self.project(), self.project("blog", features=("server",))
+        self.install(shop, blog)
 
         self.assertEqual(self.report(shop, blog), 0)
 
-        self.assertEqual(self.printed[0], "shop")
-        self.assertEqual(self.printed[1], "  ok       folder %s" % shop.directory)
-        self.assertEqual(self.printed[4], "  ok       tmux at /tools/tmux")
-        self.assertEqual(self.printed[9:11], ["", "blog"])
-        self.assertTrue(all(line.startswith("  ok ") for line in self.printed[11:]))
-        self.assertEqual(len(self.printed), 16)
-        self.assertEqual(self.mac.asked, [["/tools/claude", "--help"]], "claude is asked once for every project")
+        self.assertEqual(
+            self.printed[:4],
+            ["This Mac", "  ok       Claude Code sign-in", "  ok       service agent %s" % standins.LABEL, ""],
+        )
+        self.assertEqual(self.printed[4], "shop")
+        self.assertEqual(self.printed[5], "  ok       folder %s" % shop.directory)
+        self.assertEqual(self.printed[8], "  ok       tmux at /tools/tmux")
+        self.assertEqual(self.printed[12], '  ok       permission mode "plan"')
+        self.assertEqual(self.printed[13], "  ok       server agent %s.server.shop" % standins.LABEL)
+        self.assertEqual(self.printed[14:16], ["", "blog"])
+        self.assertTrue(all(line.startswith("  ok ") for line in self.printed[16:]))
+        self.assertEqual(self.printed[-1], "  ok       server agent %s.server.blog" % standins.LABEL)
+        self.assertEqual(len(self.printed), 22)
+        self.assertEqual(self.mac.asked, [SIGN_IN, ["/tools/claude", "--help"]], "claude is asked once for every project")
+        self.assertEqual(self.mac.launchctl.did(), [], "launchd is only asked")
 
     def test_exits_one_when_a_check_fails_and_says_what_to_do(self):
         del self.mac.found["tmux"]
@@ -252,13 +284,161 @@ class Report(Scratch):
 
         self.assertEqual(self.report(shop, blog), 1)
 
-        self.assertEqual(self.printed[:2], ["shop", "  problem  its checks could not run: RuntimeError('broken')"])
+        self.assertEqual(self.section("shop"), ["  problem  its checks could not run: RuntimeError('broken')"])
         self.assertIn("blog", self.printed)
 
-    def test_without_a_project_says_so_and_how_to_add_one(self):
+    def test_without_a_project_checks_the_sign_in_only_then_says_how_to_add_one(self):
         self.assertEqual(self.report(), 0)
 
-        self.assertEqual(self.printed, ["No project is configured. Add one from its folder with: porchlight init"])
+        self.assertEqual(
+            self.printed,
+            [
+                "This Mac",
+                "  ok       Claude Code sign-in",
+                "",
+                "No project is configured. Add one from its folder with: porchlight init",
+            ],
+            "the service exists only with a project, so its agent is not asked for",
+        )
+        self.assertEqual(self.mac.launchctl.calls, [])
+
+
+class SignIn(Scratch):
+    def test_signed_in_is_ok_and_no_account_detail_is_printed(self):
+        shop = self.project()
+        self.install(shop)
+
+        self.assertEqual(self.report(shop), 0)
+
+        self.assertEqual(self.section("This Mac")[0], "  ok       Claude Code sign-in")
+        self.assertIn(SIGN_IN, self.mac.asked)
+        for detail in ACCOUNT.values():
+            self.assertFalse([line for line in self.printed if detail in line], detail)
+
+    def test_no_one_signed_in_is_a_problem_that_says_how_to_sign_in(self):
+        self.mac.outputs[" ".join(SIGN_IN)] = SIGNED_OUT
+        shop = self.project()
+        self.install(shop)
+
+        self.assertEqual(self.report(shop), 1)
+
+        self.assertEqual(
+            self.section("This Mac")[0], "  problem  Claude Code sign-in: no one is signed in: run `claude auth login`"
+        )
+        self.assertTrue(all(line.startswith("  ok ") for line in self.section("shop")), "only the sign-in failed")
+
+    def test_signed_out_with_account_fields_and_exit_one_is_a_problem_that_prints_no_account_detail(self):
+        answer = json.dumps(dict(ACCOUNT, loggedIn=False, authMethod="none"))
+        ran = []
+
+        def run(words, **options):
+            ran.append(list(words))
+            return standins.result(1, stdout=answer)
+
+        asked = self.mac.output
+        self.mac.output = lambda words, any_exit=False: (
+            processes.output(words, run=run, any_exit=any_exit) if list(words) == SIGN_IN else asked(words, any_exit)
+        )
+        shop = self.project()
+        self.install(shop)
+
+        self.assertEqual(self.report(shop), 1)
+
+        self.assertEqual(ran, [SIGN_IN])
+        self.assertEqual(
+            self.section("This Mac")[0], "  problem  Claude Code sign-in: no one is signed in: run `claude auth login`"
+        )
+        for detail in ACCOUNT.values():
+            self.assertFalse([line for line in self.printed if detail in line], detail)
+
+    def test_without_claude_the_tool_check_says_so_and_the_sign_in_is_not_asked(self):
+        del self.mac.found["claude"]
+        shop = self.project()
+        self.install(shop)
+
+        self.assertEqual(self.report(shop), 1)
+
+        self.assertFalse([line for line in self.printed if "sign-in" in line])
+        self.assertEqual([line for line in self.printed if "Claude Code" in line], ["  missing  Claude Code (claude): " + doctor.INSTALL["claude"]])
+        self.assertEqual(self.mac.asked, [])
+
+    def test_an_answer_that_cannot_be_read_leaves_it_unknown_and_fails_nothing(self):
+        shop = self.project()
+        self.install(shop)
+        for answer in (None, "", "not json", "[]", '{"other": true}', '{"loggedIn": "yes"}'):
+            self.mac.outputs[" ".join(SIGN_IN)] = answer
+            self.printed.clear()
+
+            self.assertEqual(self.report(shop), 0, answer)
+
+            self.assertEqual(
+                self.section("This Mac")[0], "  unknown  Claude Code sign-in: `claude auth status` could not say", answer
+            )
+
+
+class LoginAgents(Scratch):
+    def setUp(self):
+        super().setUp()
+        self.shop = self.project()
+        self.blog = self.project("blog", features=("ready-session",))
+        self.install(self.shop, self.blog)
+        self.server = "%s.server.shop" % standins.LABEL
+
+    def agent_lines(self):
+        return [line for line in self.printed if " agent " in line]
+
+    def test_loaded_agents_are_ok_and_only_a_project_with_server_has_a_server_line(self):
+        self.assertEqual(self.report(self.shop, self.blog), 0)
+
+        self.assertEqual(
+            self.agent_lines(),
+            ["  ok       service agent %s" % standins.LABEL, "  ok       server agent %s" % self.server],
+        )
+        self.assertIn("  ok       service agent %s" % standins.LABEL, self.section("This Mac"))
+        self.assertIn("  ok       server agent %s" % self.server, self.section("shop"))
+        self.assertFalse([line for line in self.section("blog") if " agent " in line])
+
+    def test_an_agent_that_is_not_loaded_is_a_problem_porchlight_start_fixes(self):
+        self.mac.launchctl.loaded.clear()
+
+        self.assertEqual(self.report(self.shop, self.blog), 1)
+
+        self.assertEqual(
+            self.agent_lines(),
+            [
+                "  problem  service agent %s: not loaded: run `porchlight start`" % standins.LABEL,
+                "  problem  server agent %s: not loaded: run `porchlight start`" % self.server,
+            ],
+        )
+        self.assertEqual(self.mac.launchctl.did(), [], "nothing is loaded")
+
+    def test_an_agent_whose_file_is_missing_is_a_problem_porchlight_apply_fixes(self):
+        for label in (standins.LABEL, self.server):
+            launchd.file(self.mac.launch_agents, label).unlink()
+
+        self.assertEqual(self.report(self.shop, self.blog), 1)
+
+        self.assertEqual(
+            self.agent_lines(),
+            [
+                "  problem  service agent %s: its file is missing: run `porchlight apply`" % standins.LABEL,
+                "  problem  server agent %s: its file is missing: run `porchlight apply`" % self.server,
+            ],
+        )
+
+    def test_when_launchd_cannot_say_the_agents_are_unknown_and_fail_nothing(self):
+        self.mac.launchctl.lists = False
+
+        self.assertEqual(self.report(self.shop, self.blog), 0)
+
+        self.assertEqual(
+            self.agent_lines(),
+            [
+                "  unknown  service agent %s: launchd could not say whether it is loaded" % standins.LABEL,
+                "  unknown  server agent %s: launchd could not say whether it is loaded" % self.server,
+            ],
+        )
+        self.assertFalse([line for line in self.printed if "Nothing was changed" in line])
 
 
 if __name__ == "__main__":

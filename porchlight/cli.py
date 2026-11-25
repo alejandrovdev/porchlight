@@ -6,7 +6,7 @@
     status                     the sessions of every project
     reopen [name]              open a closed session again; without a name, list them
     retry [--project <name>]   prepare a free session that failed at the next pass, not later
-    doctor                     check what each project needs on this Mac
+    doctor                     check this Mac (sign-in, agents) and what each project needs
     view <project> <session>   follow a session the server started, read-only
     resume-list [sync]         the copies that /resume lists
     apply [--servers]          make the background agents match the configuration
@@ -278,7 +278,7 @@ def parser():
         "service: it tries at its next pass, within %d seconds. It creates no session itself." % service.INTERVAL,
     )
     retrying.add_argument("--project", metavar="<name>", help="clear this project's wait only")
-    command("doctor", check, "Check what each project needs on this Mac, and say what to do about what is missing.")
+    command("doctor", check, "Check this Mac and what each project needs on it, and say what to do about what is missing.")
     viewing = command(live_view.COMMAND, view, "Follow a session the server started, read-only.")
     viewing.add_argument("project", help="the project's name in the configuration")
     viewing.add_argument("session", type=server_session, help="the session's id, cse_...")

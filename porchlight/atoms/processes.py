@@ -29,13 +29,14 @@ def command_of(pid, run=subprocess.run):
         return None
 
 
-def output(words, run=subprocess.run):
-    """What a command prints; None when it cannot be run or it fails."""
+def output(words, run=subprocess.run, any_exit=False):
+    """What a command prints; None when it cannot be run, or when it fails unless `any_exit`
+    (for a command whose exit code is part of its answer)."""
     try:
         answer = run(list(words), capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.SubprocessError):
         return None
-    return answer.stdout if answer.returncode == 0 else None
+    return answer.stdout if answer.returncode == 0 or any_exit else None
 
 
 def terminate(pid):
