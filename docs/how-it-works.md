@@ -103,18 +103,23 @@ copied, and names any it could not copy; the session starts either way.
 
 The Remote Control server gives each of its sessions a worktree too,
 `.claude/worktrees/bridge-cse_<id>`, and leaves it there when the session ends. For a
-project with `server`, porchlight removes such a worktree by the same rule, once no process
-runs its session and neither the worktree nor its transcript has changed for 10 minutes:
-only when it is clean (nothing changed, nothing untracked) and its HEAD is on the base
-branch. Otherwise it is unlocked and left, and the project's log says why. A locked one is
-looked at only when Claude Code locked it (its lock reason starts with `claude `) and no
-process that reason names still runs; any other lock is left as it is, still locked, and
-the log says so. Its branch was made by Claude Code and is never deleted. porchlight checks
-each one once after its session ended, and again only when something in it or in the
-repository's branches changed, or when the process that held its lock ended; the log says
-why a worktree is left only when that reason is new. It touches nothing else of the
-server: a folder of another name, one git does not list as a worktree of the repository,
-and any case git cannot answer are left as they are.
+project with `server`, porchlight removes such a worktree by the same rule, once no
+process runs its session and neither the worktree nor its transcript has changed for 10
+minutes: only when it is clean (nothing changed, nothing untracked) and its HEAD is on the
+base branch. Otherwise it is unlocked and left, and the project's log says why. A locked
+one is looked at only when Claude Code locked it (its lock reason starts with `claude `)
+and no process that reason names still runs; any other lock is left as it is, still
+locked, and the log says so. Once such a worktree is removed, porchlight also deletes the
+branch the server made for it, `worktree-bridge-cse_<id>`, with `git branch -d` and never
+`-D`: only when every commit of that branch is already on the base branch and no other
+worktree has it checked out. Otherwise the branch stays, and the log says why, once; if
+the main checkout is on another branch, git may refuse to delete it, and the log says so
+too. porchlight never deletes any other branch of the server. porchlight checks each one
+once after its session ended, and again only when something in it or in the repository's
+branches changed, or when the process that held its lock ended; the log says why a
+worktree is left only when that reason is new. It touches nothing else of the server: a
+folder of another name, one git does not list as a worktree of the repository, and any
+case git cannot answer are left as they are.
 
 The base branch is the project's `base`, else the default branch git recorded for the
 repository's `origin`, else, for a repository without `origin`, the branch its main

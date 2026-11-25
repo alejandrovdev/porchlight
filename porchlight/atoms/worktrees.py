@@ -5,6 +5,7 @@ from pathlib import Path
 
 FOLDER = (".claude", "worktrees")  # where Claude Code keeps a repository's worktrees
 SERVER_PREFIX = "bridge-"  # the Remote Control server names a session's worktree bridge-<session>
+BRANCH_PREFIX = "worktree-"  # Claude Code names a worktree's branch worktree-<its folder's name>
 
 
 class Git:
@@ -78,6 +79,32 @@ def delete_branch(git, repository, branch):
     return git(repository, "branch", "-D", branch)
 
 
+def delete_merged_branch(git, repository, branch):
+    """Delete a branch only as far as git finds it merged: `-d`, never `-D`."""
+    return git(repository, "branch", "-d", branch)
+
+
+def branch_of(name):
+    """The branch Claude Code makes for a worktree of this folder name."""
+    return BRANCH_PREFIX + name
+
+
+def checked_out(git, repository):
+    """The branches the repository's worktrees have checked out, the main checkout too:
+    {branch: folder}. None when git cannot tell."""
+    answer = git(repository, "worktree", "list", "--porcelain")
+    if answer.returncode != 0:
+        return None
+    found = {}
+    folder = None
+    for line in answer.stdout.splitlines():
+        if line.startswith("worktree "):
+            folder = line[len("worktree ") :]
+        elif folder is not None and line.startswith("branch refs/heads/"):
+            found[line[len("branch refs/heads/") :]] = folder
+    return found
+
+
 def current_branch(git, path):
     return git(path, "branch", "--show-current").stdout.strip()
 
@@ -90,3 +117,9 @@ def is_clean(git, path):
 def is_merged(git, path, base):
     """Whether everything committed in a worktree is already on a branch."""
     return git(path, "merge-base", "--is-ancestor", "HEAD", base).returncode == 0
+
+
+def is_on(git, repository, branch, base):
+    """Whether every commit of a branch is on the base: True, False, or None when git cannot tell."""
+    answer = git(repository, "merge-base", "--is-ancestor", branch, base).returncode
+    return {0: True, 1: False}.get(answer)

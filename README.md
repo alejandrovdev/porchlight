@@ -282,7 +282,9 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
   session ended, porchlight removes its worktree if it is clean and its HEAD is on the base
   branch, and leaves it otherwise, saying why in the project's log; a worktree locked by
   anything but an ended Claude Code process is left locked (see
-  [How it works](#how-it-works)). The worktree's branch stays.
+  [How porchlight works](docs/how-it-works.md#the-life-of-a-session)). The worktree's
+  branch is deleted with `git branch -d` only when every commit of it is on the base
+  branch.
 - **`ready-session`**: the session waits hidden in porchlight's own tmux server
   (`tmux -L porchlight`), apart from any tmux you run. Its name in the app starts with the
   project's session prefix, which is the project's name unless you set `session_prefix`.
@@ -514,7 +516,8 @@ The folders porchlight makes for its configuration, state and logs carry a `.por
 deletes only inside folders that have it. The worktrees of the server's sessions
 (`.claude/worktrees/bridge-cse_...`) are made by Claude Code, not by porchlight; porchlight
 removes one once its session ended, only when nothing in it would be lost (see
-[How it works](#how-it-works)), and never deletes its branch.
+[How porchlight works](docs/how-it-works.md#the-life-of-a-session)), and deletes its branch
+only when every commit of it is already on the base branch.
 
 ### Login agents
 
