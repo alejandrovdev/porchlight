@@ -806,8 +806,9 @@ class Uninstall(OnTheMac):
         self.assertIn(B, self.sessions(self.blog))
         self.assertTrue(names.log_file(self.blog, self.mac.environ).exists())
 
-    def purged(self):
-        """A purge that nothing stops: files of every kind the tool keeps, and no session running."""
+    def purged(self, before=lambda: None):
+        """A purge that nothing stops: files of every kind the tool keeps, and no session
+        running. `before` runs once they are written."""
         self.mac.config_file.write_text("")
         self.session(self.blog, B, "closed", 602)
         self.mac.ps = ""
@@ -817,6 +818,7 @@ class Uninstall(OnTheMac):
         self.mac.log(self.blog, "something happened")
         names.service_log(self.mac.environ).write_text("started\n")
         names.server_log(self.shop, self.mac.environ).write_text("started\n")
+        before()
         return self.uninstall(servers=True, purge=True)
 
     def test_purge_removes_the_configuration_the_state_and_the_logs(self):
@@ -1053,6 +1055,52 @@ class Uninstall(OnTheMac):
 
         self.assertEqual(sorted(path.name for path in (self.root / "state").iterdir()), [self.MARKER, "notes.txt"])
         self.assertFalse((self.root / "logs").exists())
+
+    def test_purge_removes_the_logs_of_projects_no_longer_linked(self):
+        """A project deinit unlinked is neither configured nor in the state: its logs, and its
+        server's, go all the same, and the folder with them."""
+        gone = standins.project("gone")
+        logs = self.root / "logs"
+        (logs).mkdir(exist_ok=True)
+        names.log_file(gone, self.mac.environ).write_text("something happened\n")
+        names.server_log(gone, self.mac.environ).write_text("started\n")
+
+        self.assertEqual(self.purged(), 0)
+
+        self.assertFalse(logs.exists(), "the logs and the folder's marker are gone")
+        self.assertEqual(self.printed[-1], "Removed the configuration, the state and the logs.")
+
+    def test_purge_names_what_it_leaves_in_the_log_folder(self):
+        logs = self.root / "logs"
+        (logs / "old.log").mkdir(parents=True)  # a folder, not a log, whatever its name
+        (logs / "notes.txt").write_text("the person's own")
+
+        self.assertEqual(self.purged(), 0)
+
+        self.assertEqual(sorted(path.name for path in logs.iterdir()), [self.MARKER, "notes.txt", "old.log"])
+        self.assertEqual(
+            self.printed[-2:],
+            [
+                "%s was kept: it holds notes.txt and old.log, which porchlight did not make." % logs,
+                "Removed the configuration, the state and the logs.",
+            ],
+        )
+
+    def test_purge_says_which_logs_it_could_not_remove_and_claims_no_logs(self):
+        logs = self.root / "logs"
+        self.addCleanup(os.chmod, logs, 0o755)
+
+        self.assertEqual(self.purged(before=lambda: os.chmod(logs, 0o555)), 1, "not everything asked for was removed")
+
+        stuck = ["agent.server.shop.log", "agent.service.log", "blog.log"]
+        self.assertEqual(sorted(path.name for path in logs.iterdir()), [self.MARKER] + stuck)
+        self.assertEqual(
+            self.printed[-2:],
+            [
+                "agent.server.shop.log, agent.service.log and blog.log could not be removed from %s." % logs,
+                "Removed the configuration and the state.",
+            ],
+        )
 
 
 class OneServerForAFolder(OnTheMac):

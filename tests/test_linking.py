@@ -845,9 +845,9 @@ class Deinit(Linking):
         plan = [
             'Unlinking "shop" (%s):' % (self.root / "shop"),
             "  - it is removed from the configuration",
-            "  - its free ready session, if one waits, ends",
+            "  - its free ready session, if one waits, ends, and its worktree is removed when nothing in it would be lost",
             "  - its server %s is unloaded and removed" % SHOP,
-            "  - its worktrees in %s are left as they are" % worktrees.folder(self.root / "shop"),
+            "  - the worktrees of its sessions in use in %s are left as they are" % worktrees.folder(self.root / "shop"),
         ]
         self.assertEqual(self.printed[: len(plan)], plan)
         self.assertGreaterEqual(printed_before_unload[0], len(plan))
@@ -862,7 +862,7 @@ class Deinit(Linking):
         self.assertNotIn(("unload", BLOG), self.mac.launchctl.did())
         self.assertEqual(self.files(), [SERVICE + ".plist", BLOG + ".plist"])
         self.assertIn(BLOG + ": left running as it is, though its definition changed", self.printed)
-        self.assertEqual(self.printed[-1], "Left as they are: its worktrees and its logs.")
+        self.assertEqual(self.printed[-1], "Left as they are: the worktrees of its sessions in use, and its logs.")
 
     def test_a_folder_inside_a_project_finds_it(self):
         inner = self.root / "shop" / "src"
@@ -891,6 +891,34 @@ class Deinit(Linking):
 
         self.assertEqual(self.mac.terminated, [601])
         self.assertIn("shop: ended the free session it held", self.printed)
+        self.assertIn(
+            "removed the worktree " + names.worktree(self.shop, A),
+            self.mac.log_text(self.shop),
+            "as the plan says: nothing in it would be lost",
+        )
+
+    def test_its_help_says_which_worktrees_go_and_which_stay(self):
+        self.assertEqual(self.run_cli("deinit", "--help"), 0)
+
+        text = " ".join(" ".join(self.printed).split())
+        self.assertIn("end its free ready session, whose worktree is removed when nothing in it would be lost", text)
+        self.assertIn("Sessions in use keep running, and their worktrees and the logs stay.", text)
+        self.assertNotIn("the worktrees and the logs stay", text)
+
+    def test_a_purge_after_it_removes_the_logs_it_left(self):
+        """What a rehearsal ends with: deinit leaves the project's logs, and a purge, which no
+        longer finds the project configured or in the state, removes them all the same."""
+        self.ready_session(self.shop, A, "closed", 601)
+        self.mac.ps = ""
+        self.mac.log(self.shop, "something happened")
+        self.assertEqual(self.run_cli("deinit", str(self.root / "shop")), 0)
+        self.assertTrue(names.log_file(self.shop, self.mac.environ).exists())
+        self.printed.clear()
+
+        self.assertEqual(self.run_cli("uninstall", "--servers", "--purge"), 0)
+
+        self.assertFalse(names.log_root(self.mac.environ).exists(), "its log and the folder's marker are gone")
+        self.assertEqual(self.printed[-1], "Removed the configuration, the state and the logs.")
 
     def test_a_server_running_sessions_asks_before_they_end(self):
         self.server_session(self.shop, LIVE, 701)
