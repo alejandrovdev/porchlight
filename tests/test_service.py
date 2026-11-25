@@ -291,7 +291,7 @@ class BrokenConfiguration(Service):
         self.file.write_text('terminal = "kitty"\n')
         self.assertEqual(
             service.read(self.file),
-            (None, ["The configuration %s has problems:" % self.file, 'terminal: unknown terminal "kitty"; one of: warp']),
+            (None, ["The configuration %s has problems:" % self.file, 'terminal: unknown terminal "kitty"; one of: warp, apple-terminal']),
         )
 
         self.file.unlink()

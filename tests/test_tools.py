@@ -9,7 +9,7 @@ from pathlib import Path
 
 import porchlight
 from porchlight import config, names
-from porchlight.atoms import tmux, tools
+from porchlight.atoms import terminal, tmux, tools
 from porchlight.mac import Mac
 
 
@@ -81,6 +81,14 @@ class TheMac(unittest.TestCase):
         self.assertIsNone(Mac.of(config.Config(), environ).terminal)
         self.assertEqual(Mac.of(config.Config("warp"), environ).terminal.configs, Path("/scratch/tab_configs"))
         self.assertEqual(Mac.of(config.Config("warp"), {}).terminal.configs, Path.home() / ".warp" / "tab_configs")
+
+    def test_opens_windows_of_terminal_when_the_configuration_names_it(self):
+        environ = {"PORCHLIGHT_WARP_TAB_CONFIGS": "/scratch/tab_configs"}
+
+        opener = Mac.of(config.Config("apple-terminal"), environ).terminal
+
+        self.assertIsInstance(opener, terminal.AppleTerminal)
+        self.assertEqual(Mac(environ=environ).terminal_app("apple-terminal").title, "Terminal")
 
     def test_names_itself_by_the_installed_command_when_its_path_has_one(self):
         with tempfile.TemporaryDirectory() as scratch:

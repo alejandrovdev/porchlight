@@ -141,6 +141,7 @@ class Setup(Linking):
         self.assertIn("ok       git at /tools/git", body)
         self.assertIn("missing  tmux: install it with: brew install tmux", body)
         self.assertTrue([line for line in body if line.startswith("missing  Warp: install the Warp app")], body)
+        self.assertIn("ok       Apple-terminal, a terminal tabs can open in", body, "each supported terminal app is checked")
         self.assertEqual((self.mac.git_runner.calls, self.mac.tmux_runner.calls, self.mac.spawned), ([], [], []))
 
     def test_the_terminal_screen_lists_the_supported_terminals_and_marks_the_installed_ones(self):
@@ -148,7 +149,7 @@ class Setup(Linking):
         self.run_cli("setup", keys=keys)
 
         terminals = keys.last("Terminal")
-        self.assertEqual([item.value for item in terminals.items], list(config.TERMINALS) + ["none"])
+        self.assertEqual([item.value for item in terminals.items], ["warp", "apple-terminal", "none"])
         self.assertEqual(terminals.items[0].note, "installed")
         self.assertEqual(terminals.current, None, "a first setup starts on the first terminal, not on none")
 
@@ -159,7 +160,7 @@ class Setup(Linking):
         self.assertEqual(keys.last("Terminal").items[0].note, "not installed")
 
     def test_choosing_no_terminal_saves_none_and_a_rerun_preselects_it(self):
-        keys = standins.Keys(ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, "y")
+        keys = standins.Keys(ENTER, DOWN, DOWN, ENTER, ENTER, ENTER, ENTER, "y")
 
         self.assertEqual(self.run_cli("setup", keys=keys), 0)
 
@@ -179,6 +180,23 @@ class Setup(Linking):
         self.run_cli("setup", keys=keys)
 
         self.assertEqual([item.value for item in keys.last("Terminal").items], list(config.TERMINALS))
+
+    def test_choosing_terminal_saves_it(self):
+        keys = standins.Keys(ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, "y")
+
+        self.assertEqual(self.run_cli("setup", keys=keys), 0)
+
+        self.assertEqual(self.saved().terminal, "apple-terminal")
+        self.assertIn('terminal = "apple-terminal"', self.file.read_text())
+
+    def test_the_terminal_flag_takes_either_terminal(self):
+        flags = ["--permission-mode", "plan", "--preset", "minimal", "--yes"]
+
+        self.assertEqual(self.run_cli("setup", "--terminal", "apple-terminal", *flags), 0)
+        self.assertEqual(self.saved().terminal, "apple-terminal")
+
+        self.assertEqual(self.run_cli("setup", "--terminal", "warp", *flags), 0)
+        self.assertEqual(self.saved().terminal, "warp")
 
     def test_the_terminal_flag_takes_none_unless_a_linked_project_opens_tabs(self):
         flags = ["--terminal", "none", "--permission-mode", "plan", "--preset", "minimal", "--yes"]
@@ -390,6 +408,14 @@ class Init(Linking):
         self.assertIn("--terminal", self.errors.splitlines()[-1])
         self.assertEqual(self.run_cli("init", str(blog), "--preset", "recommended", "--terminal", "warp", "--yes"), 0)
         self.assertEqual(self.saved().terminal, "warp")
+
+    def test_the_terminal_flag_of_init_takes_terminal(self):
+        config.save(config.Config(None, (), config.Defaults("plan", ("server",))), self.file)
+        blog = self.repository("blog")
+
+        self.assertEqual(self.run_cli("init", str(blog), "--preset", "recommended", "--terminal", "apple-terminal", "--yes"), 0)
+
+        self.assertEqual(self.saved().terminal, "apple-terminal")
 
     def test_a_linked_folder_shows_its_current_values_and_is_replaced_in_place(self):
         self.configure(shop=("server",), blog=("server",))

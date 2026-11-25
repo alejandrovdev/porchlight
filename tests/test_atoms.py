@@ -281,6 +281,140 @@ class Warp(unittest.TestCase):
         self.assertIsInstance(terminal.named("warp", configs=self.configs), terminal.Terminal)
         self.assertEqual(terminal.named("warp", configs=self.configs).configs, self.configs)
         self.assertIsNone(terminal.named(None))
+        self.assertIsInstance(terminal.named("apple-terminal"), terminal.AppleTerminal)
+
+
+class AppleTerminal(unittest.TestCase):
+    PROCESS = "88 /System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal\n"
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.now = 0.0
+
+    def tearDown(self):
+        self.scratch.cleanup()
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+    def apple(self, runner):
+        return terminal.AppleTerminal(run=runner, clock=lambda: self.now, sleep=self.sleep)
+
+    def test_is_named_as_the_configuration_and_a_person_name_it(self):
+        self.assertEqual((terminal.AppleTerminal.name, terminal.AppleTerminal.title), ("apple-terminal", "Terminal"))
+        self.assertIsInstance(terminal.AppleTerminal(), terminal.Terminal)
+
+    def test_tells_whether_the_app_runs(self):
+        apple = terminal.AppleTerminal()
+
+        self.assertTrue(apple.runs(self.PROCESS))
+        self.assertFalse(apple.runs("77 /Applications/Warp.app/Contents/MacOS/stable\n78 grep Terminal.app\n"))
+
+    def test_tells_whether_the_app_is_installed_without_starting_it(self):
+        utilities = Path(self.scratch.name) / "Utilities"
+        runner = standins.Runner()
+        apple = terminal.AppleTerminal(run=runner, applications=[utilities])
+
+        self.assertFalse(apple.installed())
+        (utilities / "Terminal.app").mkdir(parents=True)
+        self.assertTrue(apple.installed())
+        self.assertEqual(runner.calls, [], "nothing is run to find out")
+        self.assertEqual(terminal.AppleTerminal().applications, (Path("/System/Applications/Utilities"),))
+
+    def test_opens_a_window_that_runs_the_command_in_the_folder_with_the_title(self):
+        runner = standins.Runner()
+
+        found = self.apple(runner).open_tab("porchlight_ready_shop-aaaaaaaa", "shop · Fix", "/srv/my shop", "exec x", lambda: 301)
+
+        self.assertEqual(found, 301)
+        self.assertEqual(
+            runner.calls,
+            [["/usr/bin/osascript", "-e", terminal.AppleTerminal.SCRIPT, "--", "cd -- '/srv/my shop' && exec x", "shop · Fix"]],
+        )
+        self.assertIn("do script", terminal.AppleTerminal.SCRIPT)
+        self.assertIn("on run argv", terminal.AppleTerminal.SCRIPT)
+        self.assertNotIn("System Events", terminal.AppleTerminal.SCRIPT)
+        self.assertEqual(runner.options[0].get("timeout"), 15)
+
+    def test_every_value_reaches_applescript_only_as_an_argument(self):
+        hostile = '" & do shell script "touch /tmp/x" & "\\ \'quoted\' $(rm -rf ~) `id`'
+        runner = standins.Runner()
+
+        self.apple(runner).open_tab("porchlight_view_shop-01AAA", hostile, hostile, "exec x", lambda: 1)
+
+        words = runner.calls[0]
+        self.assertEqual(words[:4], ["/usr/bin/osascript", "-e", terminal.AppleTerminal.SCRIPT, "--"])
+        self.assertEqual(words[5], hostile, "the title is passed as it was given")
+        self.assertEqual(shlex.split(words[4]), ["cd", "--", hostile, "&&", "exec", "x"], "the folder is one shell word")
+        self.assertNotIn("touch", terminal.AppleTerminal.SCRIPT)
+        self.assertEqual(len(words), 6)
+
+    def test_a_folder_of_any_name_is_one_word_of_the_shell_line_that_runs_in_it(self):
+        marker = Path(self.scratch.name) / "marker"
+        names = ["it's", "$(touch %s)" % marker, "`touch %s`" % marker, "a; touch %s" % marker, "-n", "two\nlines",
+                 "!!", "*", "~", "' ; touch %s ; '" % marker]
+        for name in names:
+            with self.subTest(folder=name):
+                folder = Path(self.scratch.name) / "projects" / name
+                folder.mkdir(parents=True)
+                runner = standins.Runner()
+
+                self.apple(runner).open_tab("porchlight_ready_shop-aaaaaaaa", "t", folder, "exec /bin/pwd", lambda: 1)
+
+                shell_line = runner.calls[0][4]
+                ran = subprocess.run(["/bin/sh", "-c", shell_line], cwd=self.scratch.name, capture_output=True, text=True, timeout=10)
+                self.assertEqual((ran.returncode, ran.stdout), (0, str(folder) + "\n"), ran.stderr)
+                self.assertFalse(marker.exists(), "nothing in the folder's name ran")
+
+    def test_a_title_of_any_text_stays_after_the_script_and_the_end_of_options(self):
+        for title in ("-e", "--", "-l JavaScript", '" & do shell script "id" & "', "a\nb", "end run", "$(id)"):
+            with self.subTest(title=title):
+                runner = standins.Runner()
+
+                self.apple(runner).open_tab("porchlight_view_shop-01AAA", title, "/srv", "exec x", lambda: 1)
+
+                words = runner.calls[0]
+                self.assertEqual(words[2], terminal.AppleTerminal.SCRIPT)
+                self.assertEqual(words[3], "--")
+                self.assertEqual(words[5], title)
+
+    def test_a_nul_in_the_title_is_dropped_and_the_window_opens(self):
+        runner = standins.Runner(lambda words: ValueError("embedded null byte") if any("\0" in w for w in words) else None)
+
+        found = self.apple(runner).open_tab("porchlight_view_shop-01AAA", "shop\0 · Fix\0", "/srv", "exec x", lambda: 7)
+
+        self.assertEqual(found, 7)
+        self.assertEqual(runner.calls[0][5], "shop · Fix")
+
+    def test_a_nul_in_the_folder_or_the_command_cannot_be_run_and_says_so(self):
+        for directory, command in (("/srv/a\0b", "exec x"), ("/srv", "exec x\0y")):
+            with self.subTest(directory=directory, command=command):
+                runner = standins.Runner()
+
+                with self.assertRaises(OSError) as raised:
+                    self.apple(runner).open_tab("porchlight_view_shop-01AAA", "t", directory, command, lambda: 1)
+
+                self.assertIn("NUL", str(raised.exception))
+                self.assertEqual(runner.calls, [], "nothing is run")
+
+    def test_asks_again_when_the_window_did_not_start_and_then_gives_up(self):
+        runner = standins.Runner()
+
+        found = self.apple(runner).open_tab("porchlight_view_shop-01AAA", "t", "/srv", "x", lambda: 0, attempts=2, patience=8)
+
+        self.assertEqual(found, 0)
+        self.assertEqual(len(runner.calls), 2)
+        self.assertGreaterEqual(self.now, 2 * 8)
+
+    def test_a_refused_window_raises_so_that_it_is_logged(self):
+        refused = standins.result(1, stderr="execution error: Not authorized to send Apple events to Terminal. (-1743)\n")
+        runner = standins.Runner(lambda words: refused)
+
+        with self.assertRaises(subprocess.SubprocessError) as raised:
+            self.apple(runner).open_tab("porchlight_ready_shop-aaaaaaaa", "t", "/srv", "x", lambda: 1)
+
+        self.assertIn("Not authorized to send Apple events to Terminal", str(raised.exception))
+        self.assertEqual(len(runner.calls), 1)
 
 
 class State(unittest.TestCase):

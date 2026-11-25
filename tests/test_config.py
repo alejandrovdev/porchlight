@@ -36,6 +36,11 @@ class Parse(unittest.TestCase):
         self.assertEqual(shop.prefix, "shop", "the session prefix defaults to the project's name")
         self.assertIsNone(shop.base, "the base branch is read from the repository when not given")
 
+    def test_terminal_app_is_a_terminal_after_warp(self):
+        self.assertEqual(config.TERMINALS, ("warp", "apple-terminal"))
+        self.assertEqual(config.parse(ONE.replace('terminal = "warp"', 'terminal = "apple-terminal"')).terminal, "apple-terminal")
+        self.assertEqual(config.parse(ONE).terminal, "warp", "Warp is still accepted")
+
     def test_reads_several_projects_each_with_its_own_features(self):
         parsed = config.parse(
             ONE
@@ -109,7 +114,7 @@ speed = "fast"
         self.assertEqual(
             found,
             [
-                ("terminal", 'unknown terminal "teletype"; one of: warp'),
+                ("terminal", 'unknown terminal "teletype"; one of: warp, apple-terminal'),
                 ("colour", "unknown key"),
                 ("projects.Shop_1", "a project's name has lowercase letters, digits and hyphens, at most 32"),
                 ("projects.blog.path", "missing"),

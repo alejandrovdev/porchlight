@@ -67,7 +67,7 @@ PRESETS = {
     "recommended": tuple(FEATURES),
 }
 
-TERMINALS = ("warp",)
+TERMINALS = ("warp", "apple-terminal")  # the first is where setup starts
 # When keep-awake holds the Mac awake: on AC power and on battery, or on AC power only.
 KEEP_AWAKE = ("always", "plugged-in")
 TOOLS = ("claude", "git", "tmux", "terminal")
