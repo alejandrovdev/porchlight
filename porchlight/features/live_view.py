@@ -3,7 +3,9 @@
     view(project, session, mac)   what the command `view <project> <session id, cse_...>` runs
 
 Prints the session's conversation and keeps following it: what the user wrote, what
-Claude answered, and one line per tool call. Nothing typed here reaches the session; it
+Claude answered, and one line per tool call. Every control character in them but tabs and
+line breaks is replaced first: what a model or a tool writes never reaches the terminal as
+an escape sequence. Nothing typed here reaches the session; it
 is driven from the phone. The view ends by itself a moment after the session's process
 ends (the session was archived), which closes the terminal tab that runs it
 (`view_tabs` opens that tab).
@@ -17,6 +19,7 @@ from pathlib import Path
 
 from .. import names
 from ..atoms import processes, transcripts, worktrees
+from ..atoms.text import printable
 
 COMMAND = "view"  # the command of the tool that a tab runs
 SESSION = re.compile(re.escape(names.SERVER_SESSION) + r"[A-Za-z0-9]+")
@@ -86,8 +89,14 @@ def tool_line(name, tool_input):
     return line if len(line) <= 120 else line[:119] + "…"
 
 
+def shown(text):
+    """Text as the view prints it: each control character but tabs and line breaks
+    replaced, half characters dropped."""
+    return printable(str(text).replace("\r\n", "\n"), keep="\t\n")
+
+
 def render(entry):
-    """The conversation items of one transcript line: (kind, text) pairs."""
+    """The conversation items of one transcript line: (kind, text) pairs, printable."""
     if entry.get("isSidechain") or entry.get("isMeta"):
         return []
     content = (entry.get("message") or {}).get("content")
@@ -98,7 +107,7 @@ def render(entry):
     for block in blocks:
         if not isinstance(block, dict):
             continue
-        text = str(block.get("text") or "").strip()
+        text = shown(block.get("text") or "").strip()
         if entry.get("type") == "user":
             if block.get("type") == "text" and text and not text.startswith(NOT_CONVERSATION):
                 items.append(("user", text))
@@ -106,7 +115,7 @@ def render(entry):
             if block.get("type") == "text" and text:
                 items.append(("assistant", text))
             elif block.get("type") == "tool_use":
-                items.append(("tool", tool_line(block.get("name"), block.get("input"))))
+                items.append(("tool", shown(tool_line(block.get("name"), block.get("input")))))
     return items
 
 

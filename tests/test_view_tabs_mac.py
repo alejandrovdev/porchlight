@@ -236,6 +236,16 @@ class Follow(OnTheMac):
             ],
         )
 
+    def test_prints_no_control_sequence_the_model_wrote(self):
+        self.write_transcript(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Done\x1b]52;c;b3duZWQ=\x07 \x1b[2J"}]}},
+        )
+
+        self.follow()
+
+        self.assertIn("Done\ufffd]52;c;b3duZWQ=\ufffd \ufffd[2J", self.shown())
+        self.assertEqual([line for line in self.shown() if "\x1b" in line or "\x07" in line], [])
+
     def test_stays_open_while_ps_cannot_tell(self):
         self.mac.commands[101] = None
 
