@@ -2,14 +2,18 @@
 terminal, the process list and the clock answer what each test tells them to."""
 
 import json
+import os
 import re
+import shutil
+import subprocess
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from porchlight import config, names
-from porchlight.atoms import tools
+from porchlight.atoms import tools, worktrees
 from porchlight.features import ready_sessions
 from tests import standins
 
@@ -375,6 +379,17 @@ class Create(OnTheMac):
         self.assertIn("--remote-control-session-name-prefix Shop", started[-1])
         self.assertEqual(self.terminal.tabs, [], "a free session waits without a tab")
 
+    def test_without_a_worktreeinclude_git_is_asked_nothing_more_than_before(self):
+        self.git(symbolic_ref=standins.result(stdout="origin/trunk\n"), rev_parse=standins.result(returncode=1))
+        self.claude_starts()
+        state = {"sessions": {}, "read": {}, "failures": 0, "retry_after": 0}
+
+        ready_sessions.create(self.project, state, self.mac)
+
+        self.assertEqual(len(state["sessions"]), 1)
+        self.assertEqual(subcommands(self.mac.git_runner), ["rev-parse", "symbolic-ref", "worktree add"])
+        self.assertNotIn("worktreeinclude", self.mac.log_text(self.project))
+
     def test_writes_the_settings_its_session_starts_with(self):
         self.git(symbolic_ref=standins.result(stdout="origin/trunk\n"), rev_parse=standins.result(returncode=1))
         self.claude_starts()
@@ -415,6 +430,105 @@ class Create(OnTheMac):
             ready_sessions.create(self.project, {"sessions": {}, "read": {}, "failures": 0, "retry_after": 0}, mac)
 
         self.assertEqual(mac.git_runner.calls, [], "no worktree is made for a session that cannot start")
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class WorktreeInclude(OnTheMac):
+    """A new session's worktree gets the files .worktreeinclude lists, before it starts."""
+
+    def setUp(self):
+        super().setUp()
+        environment = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.project = standins.project("shop", self.project.path, mode="plan", base="main", prefix="Shop")
+        self.repository = names.repository(self.project)
+        self.real_git("init", "-q", "-b", "main")
+        (self.repository / ".gitignore").write_text(".env\n.claude/worktrees/\n", encoding="utf8")
+        self.real_git("add", "-A")
+        self.real_git("commit", "-q", "-m", "start")
+        self.mac.git = worktrees.Git(shutil.which("git"))
+        self.seen_at_start = []
+
+        def answer(words):
+            if "new-session" in words:
+                directory = Path(words[words.index("-c") + 1])
+                self.seen_at_start.append((directory / ".env").exists())
+                session = re.search(r"--session-id (\S+)", words[-1]).group(1)
+                self.mac.ps += f"501 claude --session-id {session} --remote-control\n"
+
+        self.mac.tmux_runner.answers = answer
+
+    def real_git(self, *arguments):
+        subprocess.run(
+            [shutil.which("git"), "-C", str(self.repository), "-c", "user.name=Test", "-c", "user.email=t@example.com"]
+            + list(arguments),
+            check=True,
+            capture_output=True,
+        )
+
+    def create(self):
+        state = {"sessions": {}, "read": {}, "failures": 0, "retry_after": 0}
+        ready_sessions.create(self.project, state, self.mac)
+        return state
+
+    def test_the_listed_files_are_copied_before_the_session_starts_and_the_log_says_so(self):
+        (self.repository / ".env").write_text("secret\n", encoding="utf8")
+        (self.repository / ".worktreeinclude").write_text(".env\n", encoding="utf8")
+
+        state = self.create()
+
+        ((session, record),) = state["sessions"].items()
+        self.assertEqual((Path(record["worktree"]) / ".env").read_text(encoding="utf8"), "secret\n")
+        self.assertEqual(self.seen_at_start, [True], "the file is there when the session starts")
+        self.assertIn(
+            "copied 1 file listed in .worktreeinclude into the worktree of %s" % names.short(session),
+            self.mac.log_text(self.project),
+        )
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads any file")
+    def test_a_copy_that_fails_is_logged_and_the_session_still_starts(self):
+        secret = self.repository / ".env"
+        secret.write_text("secret\n", encoding="utf8")
+        secret.chmod(0)  # the scratch folder's removal deletes it all the same
+        (self.repository / ".worktreeinclude").write_text(".env\n", encoding="utf8")
+
+        state = self.create()
+
+        ((session, record),) = state["sessions"].items()
+        self.assertEqual(record["state"], "free")
+        self.assertEqual(self.seen_at_start, [False])
+        self.assertEqual(state["failures"], 0)
+        log = self.mac.log_text(self.project)
+        self.assertIn(
+            "could not copy 1 file listed in .worktreeinclude into the worktree of %s: .env:" % names.short(session),
+            log,
+        )
+        self.assertIn("prepared the free session %s" % names.short(session), log)
+
+    def test_a_worktree_made_again_on_its_own_branch_gets_the_listed_files_too(self):
+        (self.repository / ".env").write_text("secret\n", encoding="utf8")
+        (self.repository / ".worktreeinclude").write_text(".env\n", encoding="utf8")
+        record = self.record("closed")
+        self.real_git("branch", record["branch"], "main")  # as a session that was closed leaves it
+
+        self.assertTrue(ready_sessions.add_worktree(self.project, record, A, self.mac))
+
+        self.assertEqual((Path(record["worktree"]) / ".env").read_text(encoding="utf8"), "secret\n")
+        self.assertIn(
+            "copied 1 file listed in .worktreeinclude into the worktree of %s" % names.short(A),
+            self.mac.log_text(self.project),
+        )
+
+    def test_without_a_worktreeinclude_the_session_starts_as_before(self):
+        (self.repository / ".env").write_text("secret\n", encoding="utf8")
+
+        state = self.create()
+
+        ((session, record),) = state["sessions"].items()
+        self.assertEqual(record["state"], "free")
+        self.assertEqual(self.seen_at_start, [False])
+        self.assertNotIn("worktreeinclude", self.mac.log_text(self.project))
 
 
 class Reconcile(OnTheMac):

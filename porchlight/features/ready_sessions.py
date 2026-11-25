@@ -31,6 +31,9 @@ back with `reopen`, which a session runs when the user asks it to; a reopened se
 in its tab directly, without tmux, and in a project without tabs it runs hidden, in tmux,
 as a ready session does.
 
+A new worktree gets the files the repository's `.worktreeinclude` lists, as Claude Code's
+own worktrees do, before its session starts; a file that cannot be copied is logged.
+
 Only sessions in this project's own state are ever stopped or tidied; a session someone
 started by hand is never touched. A worktree is removed only when it is clean and its HEAD
 is on the base branch; otherwise it is unlocked and left.
@@ -61,7 +64,7 @@ import uuid
 from pathlib import Path
 
 from .. import config, names, session_settings
-from ..atoms import processes, transcripts, worktrees
+from ..atoms import include, processes, transcripts, worktrees
 
 STATE = "ready-sessions"
 UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -339,9 +342,9 @@ def add_worktree(project, record, session, mac):
         worktrees.lock(mac.git, repository, path, reason)  # fails when it is locked already
         return True
     if branch and worktrees.branch_exists(mac.git, repository, branch):
-        if worktrees.add(mac.git, repository, path, reason, branch).returncode == 0:
-            return True
-        result = worktrees.add(mac.git, repository, path, reason, branch, "--detach")  # checked out elsewhere
+        result = worktrees.add(mac.git, repository, path, reason, branch)
+        if result.returncode != 0:
+            result = worktrees.add(mac.git, repository, path, reason, branch, "--detach")  # checked out elsewhere
     else:
         base = base_branch(project, mac)
         if base is None:
@@ -353,7 +356,25 @@ def add_worktree(project, record, session, mac):
             result = worktrees.add(mac.git, repository, path, reason, base, "--detach")
     if result.returncode != 0:
         mac.log(project, "no worktree for %s: %s" % (names.short(session), result.stderr.strip()[:300]))
-    return result.returncode == 0
+        return False
+    copy_included(project, session, path, mac)
+    return True
+
+
+def files(count):
+    return "%d file%s" % (count, "" if count == 1 else "s")
+
+
+def copy_included(project, session, path, mac):
+    """Copy into a new worktree the files its repository's .worktreeinclude lists; a copy
+    that fails is logged, and the session starts all the same."""
+    copied = include.copy(mac.git, names.repository(project), path)
+    where = "listed in %s into the worktree of %s" % (include.FILE, names.short(session))
+    if copied.files:
+        mac.log(project, "copied %s %s" % (files(len(copied.files)), where))
+    if copied.failures:
+        why = "; ".join("%s: %s" % (failed, reason) if failed else reason for failed, reason in copied.failures)
+        mac.log(project, "could not copy %s %s: %s" % (files(len(copied.failures)), where, why[:300]))
 
 
 def tidy(project, record, mac):
