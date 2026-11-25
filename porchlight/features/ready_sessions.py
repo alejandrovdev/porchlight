@@ -8,7 +8,9 @@ terminal tab shows.
     reconcile(project, mac)      keep one free session ready, open the tab of a session
                                  that is now in use, stop a session the app archived, tidy
                                  what ended
-    status(project, mac)         print the sessions and their state
+    status(project, mac)         print the sessions and their state, and the back-off a
+                                 failed free session waits out
+    retry(project, mac)          clear that back-off, so the service's next pass tries
     held(project, mac)           whether the state holds a session at all
     reopen(project, text, mac)   open a closed session again, back online in the app: in a
                                  new tab, or hidden for a project without tabs; without a
@@ -41,6 +43,11 @@ it keeps running hidden, and `status` prints the command that attaches to it; a 
 that is reopened comes back hidden too, and `reopen` prints that command. Without `reopen`
 a session is told nothing about reopening and `reopen` refuses. With `tabs`, a session whose
 tab failed to open three times keeps running hidden, and `status` prints that command too.
+
+A free session that fails to start is tried again later: two minutes after the first
+failure, twice as long after each next one, at most an hour. `status` says when the next
+try comes, and `retry` clears the wait. Writing the state does not wake the service: the
+cleared project is tried at the service's next pass, which comes at its interval.
 """
 
 import calendar
@@ -582,8 +589,27 @@ def held(project, mac):
     return bool(load_state(mac.store(project, STATE))["sessions"])
 
 
+def backing_off(project, state, mac):
+    """Whether the free session waits out a back-off: a failure set the next try later."""
+    return project.has("ready-session") and state["failures"] > 0 and mac.clock() < state["retry_after"]
+
+
 def status(project, mac, out=print):
     state = load_state(mac.store(project, STATE))
+    print_sessions(project, state, mac, out)
+    if backing_off(project, state, mac):
+        failures = state["failures"]
+        out(
+            "No free session for now: %s. The next one is at %s; to try now: %s"
+            % (
+                "1 attempt failed" if failures == 1 else "%d attempts in a row failed" % failures,
+                time.strftime("%Y-%m-%d %H:%M", time.localtime(state["retry_after"])),
+                names.command("retry", "--project", project.name),
+            )
+        )
+
+
+def print_sessions(project, state, mac, out):
     live = running(mac.processes())
     if not state["sessions"]:
         out("No session with Claude Code's interface yet.")
@@ -599,6 +625,28 @@ def status(project, mac, out=print):
         no_tab_will_open = not project.has("tabs") or given_up(record)
         if session in live and hidden(record) and record.get("tmux") and no_tab_will_open:
             out("    " + mac.tmux.attach(record["tmux"]))  # how to see it
+
+
+def retry(project, mac, out, within):
+    """Clear the back-off of a project's free session, so that the service's next pass, in
+    `within` seconds at most, tries to prepare it; True when there was one. No session is
+    started here, and a project with no state gets no file."""
+    store = mac.store(project, STATE)
+    if store.path.exists():
+        with store.locked():
+            state = load_state(store)
+            failures = state["failures"]
+            if failures > 0 or state["retry_after"] > mac.clock():
+                state["failures"] = state["retry_after"] = 0
+                save_state(store, state)
+                mac.log(project, "the back-off is cleared by hand (%d failed in a row)" % failures)
+                out(
+                    "%s: the back-off is cleared (%s had failed). The service tries again at its next pass, "
+                    "within %d seconds." % (project.name, "1 attempt" if failures == 1 else "%d attempts" % failures, within)
+                )
+                return True
+    out("%s: no back-off; nothing to clear." % project.name)
+    return False
 
 
 def reopen_hidden(project, session, record, mac, out):

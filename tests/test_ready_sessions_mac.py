@@ -4,6 +4,7 @@ terminal, the process list and the clock answer what each test tells them to."""
 import json
 import re
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -971,6 +972,89 @@ class Status(OnTheMac):
         ready_sessions.status(self.project, self.mac, out=self.printed.append)
 
         self.assertEqual(self.printed, ["No session with Claude Code's interface yet."])
+
+    def test_says_when_the_free_session_waits_out_a_back_off_and_how_to_try_now(self):
+        self.save({A: self.record("closed", title="Header on phones")}, failures=3, retry_after=self.mac.now + 480)
+
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.mac.now + 480))
+        self.assertEqual(len(self.printed), 2)
+        self.assertRegex(self.printed[0], r"^aaaaaaaa  closed .* Header on phones  \(not running\)$")
+        self.assertEqual(
+            self.printed[1],
+            "No free session for now: 3 attempts in a row failed. The next one is at %s; "
+            "to try now: porchlight retry --project shop" % when,
+        )
+
+        self.printed.clear()
+        self.save({}, failures=1, retry_after=self.mac.now + 120)
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.mac.now + 120))
+        self.assertEqual(
+            self.printed,
+            [
+                "No session with Claude Code's interface yet.",
+                "No free session for now: 1 attempt failed. The next one is at %s; "
+                "to try now: porchlight retry --project shop" % when,
+            ],
+        )
+
+    def test_says_nothing_of_a_back_off_that_is_over(self):
+        self.save({}, failures=2, retry_after=self.mac.now)
+
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        self.assertEqual(self.printed, ["No session with Claude Code's interface yet."])
+
+
+class Retry(OnTheMac):
+    def test_a_pass_during_a_back_off_prepares_nothing_and_one_after_retry_tries_at_once(self):
+        self.git(symbolic_ref=standins.result(stdout="origin/trunk\n"), rev_parse=standins.result(returncode=1))
+        self.claude_starts()
+        self.save({}, failures=3, retry_after=self.mac.now + 480)
+
+        ready_sessions.reconcile(self.project, self.mac)
+
+        self.assertEqual(self.mac.tmux_runner.having("new-session"), [], "the back-off holds")
+        self.assertEqual(self.saved()["sessions"], {})
+
+        self.assertTrue(ready_sessions.retry(self.project, self.mac, self.printed.append, within=20))
+
+        saved = self.saved()
+        self.assertEqual((saved["failures"], saved["retry_after"]), (0, 0))
+        self.assertEqual(
+            self.printed,
+            ["shop: the back-off is cleared (3 attempts had failed). The service tries again at its next pass, "
+             "within 20 seconds."],
+        )  # fmt: skip
+        self.assertEqual(self.mac.tmux_runner.calls, [], "retry starts nothing itself")
+        self.assertIn("the back-off is cleared by hand (3 failed in a row)", self.mac.log_text(self.project))
+
+        ready_sessions.reconcile(self.project, self.mac)
+
+        self.assertEqual([record["state"] for record in self.saved()["sessions"].values()], ["free"])
+
+    def test_keeps_the_sessions_and_says_when_there_is_no_back_off(self):
+        self.save({A: self.record("used")}, failures=0, retry_after=self.mac.now - 600)
+        before = self.saved()
+
+        self.assertFalse(ready_sessions.retry(self.project, self.mac, self.printed.append, within=20))
+
+        self.assertEqual(self.printed, ["shop: no back-off; nothing to clear."])
+        self.assertEqual(self.saved(), before, "nothing is written")
+        self.assertEqual(self.mac.log_text(self.project), "")
+
+        self.printed.clear()
+        self.save({A: self.record("used")}, failures=1, retry_after=self.mac.now + 120)
+        ready_sessions.retry(self.project, self.mac, self.printed.append, within=20)
+        self.assertEqual(self.saved()["sessions"], {A: self.record("used")}, "the sessions stay as they were")
+
+    def test_a_project_with_no_state_yet_has_no_back_off_and_gets_no_file(self):
+        self.assertFalse(ready_sessions.retry(self.project, self.mac, self.printed.append, within=20))
+
+        self.assertEqual(self.printed, ["shop: no back-off; nothing to clear."])
+        self.assertFalse(self.mac.store(self.project, ready_sessions.STATE).path.exists())
 
 
 if __name__ == "__main__":

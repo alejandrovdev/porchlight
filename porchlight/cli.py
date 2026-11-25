@@ -5,6 +5,7 @@
     deinit [folder]            unlink a project's folder
     status                     the sessions of every project
     reopen [name]              open a closed session again; without a name, list them
+    retry [--project <name>]   prepare a free session that failed at the next pass, not later
     doctor                     check what each project needs on this Mac
     view <project> <session>   follow a session the server started, read-only
     resume-list [sync]         the copies that /resume lists
@@ -62,6 +63,25 @@ def reopen(chosen, configuration, mac, out):
         return ready_sessions.reopen_anywhere(configuration, text, mac, out)
     project = project_named(configuration, chosen.project, out)
     return 1 if project is None else ready_sessions.reopen(project, text, mac, out)
+
+
+def retry(chosen, configuration, mac, out):
+    if chosen.project is None:
+        projects = [project for project in configuration.projects if project.has("ready-session")]
+        if not projects:
+            out('No project has the feature "ready-session". Nothing was cleared.')
+            return 1
+    else:
+        project = project_named(configuration, chosen.project, out)
+        if project is None:
+            return 1
+        if not project.has("ready-session"):
+            out('The project "%s" does not have the feature "ready-session". Nothing was cleared.' % project.name)
+            return 1
+        projects = [project]
+    for project in projects:
+        ready_sessions.retry(project, mac, out, within=service.INTERVAL)
+    return 0
 
 
 def check(chosen, configuration, mac, out):
@@ -248,6 +268,16 @@ def parser():
     )
     reopening.add_argument("name", nargs="*", help="the session's title, its first prompt, part of either, or its id")
     reopening.add_argument("--project", metavar="<name>", help="look in this project only")
+    retrying = command(
+        "retry",
+        retry,
+        "Clear the wait after a free session failed to start, so the next pass tries again.",
+        details="After a free session fails to start, the service waits before it tries again: two minutes, "
+        "twice as long after each next failure, at most an hour (`status` says until when). This clears that "
+        "wait for every project with ready-session, or the one named. Writing the state does not wake the "
+        "service: it tries at its next pass, within %d seconds. It creates no session itself." % service.INTERVAL,
+    )
+    retrying.add_argument("--project", metavar="<name>", help="clear this project's wait only")
     command("doctor", check, "Check what each project needs on this Mac, and say what to do about what is missing.")
     viewing = command(live_view.COMMAND, view, "Follow a session the server started, read-only.")
     viewing.add_argument("project", help="the project's name in the configuration")

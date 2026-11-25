@@ -5,6 +5,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -100,7 +101,8 @@ class Basics(CommandLine):
         self.assertEqual(self.run_cli("--help", config_file=False), 0)
 
         text = "\n".join(self.printed)
-        listed = ("setup", "init", "deinit", "status", "reopen", "doctor", "view", "resume-list", "apply", "start")
+        listed = ("setup", "init", "deinit", "status", "reopen", "retry", "doctor", "view", "resume-list", "apply")
+        listed += ("start",)
         for command in listed + ("stop", "uninstall", "run", "server"):
             self.assertIn("\n    %s " % command, text)
 
@@ -117,7 +119,7 @@ class Basics(CommandLine):
     def test_a_configuration_that_does_not_parse_prints_each_problem_by_key_and_exits_one(self):
         self.file.write_text('terminal = "kitty"\n[projects.shop]\npermission_mode = "plan"\npreset = "minimal"\n')
 
-        every = (["status"], ["doctor"], ["reopen"], ["resume-list"], ["view", "shop", LIVE])
+        every = (["status"], ["doctor"], ["reopen"], ["retry"], ["resume-list"], ["view", "shop", LIVE])
         every += (["apply"], ["apply", "--servers"], ["server", "shop"])  # `uninstall` works without it
         for command in every:
             self.printed.clear()
@@ -197,6 +199,29 @@ class Status(CommandLine):
             ],
         )
 
+    def test_says_under_a_projects_ready_sessions_when_its_free_session_waits_out_a_back_off(self):
+        shop, _ = self.configure(shop=("ready-session",), blog=("ready-session",))
+        store = self.mac.store(shop, ready_sessions.STATE)
+        store.save(dict(ready_sessions.load_state(store), failures=2, retry_after=self.mac.now + 240))
+
+        self.assertEqual(self.run_cli("status"), 0)
+
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(self.mac.now + 240))
+        self.assertEqual(
+            self.printed,
+            [
+                "shop",
+                "  Ready sessions, with Claude Code's interface:",
+                "    No session with Claude Code's interface yet.",
+                "    No free session for now: 2 attempts in a row failed. The next one is at %s; "
+                "to try now: porchlight retry --project shop" % when,
+                "",
+                "blog",
+                "  Ready sessions, with Claude Code's interface:",
+                "    No session with Claude Code's interface yet.",
+            ],
+        )
+
     def test_without_a_project_says_how_to_add_one(self):
         self.assertEqual(self.run_cli("status"), 0, "a file that is not there is a configuration without projects")
 
@@ -245,6 +270,89 @@ class Reopen(CommandLine):
         self.assertEqual(self.run_cli("reopen", "header", "--project", "docs"), 1)
 
         self.assertEqual(self.printed, ['No project "docs" in the configuration. Its projects: shop, blog'])
+
+
+class Retry(CommandLine):
+    def setUp(self):
+        super().setUp()
+        self.shop, self.blog, self.docs = self.configure(
+            shop=("ready-session",), blog=("ready-session", "tabs"), docs=("server",)
+        )
+
+    def back_off(self, project, failures, retry_after):
+        store = self.mac.store(project, ready_sessions.STATE)
+        state = ready_sessions.load_state(store)
+        state.update(failures=failures, retry_after=retry_after)
+        store.save(state)
+
+    def saved(self, project):
+        return self.mac.store(project, ready_sessions.STATE).load(None)
+
+    def test_clears_the_back_off_of_every_project_with_a_ready_session(self):
+        self.back_off(self.shop, 3, self.mac.now + 480)
+
+        self.assertEqual(self.run_cli("retry"), 0)
+
+        self.assertEqual(
+            self.printed,
+            [
+                "shop: the back-off is cleared (3 attempts had failed). The service tries again at its next pass, "
+                "within 20 seconds.",
+                "blog: no back-off; nothing to clear.",
+            ],
+        )
+        self.assertEqual((self.saved(self.shop)["failures"], self.saved(self.shop)["retry_after"]), (0, 0))
+        self.assertIsNone(self.saved(self.blog), "a project with nothing to clear gets no file")
+        self.assertIsNone(self.saved(self.docs))
+        self.assertEqual(self.mac.tmux_runner.calls, [], "it starts no session itself")
+
+    def test_project_limits_it_to_one(self):
+        self.back_off(self.shop, 3, self.mac.now + 480)
+        self.back_off(self.blog, 1, self.mac.now + 120)
+
+        self.assertEqual(self.run_cli("retry", "--project", "blog"), 0)
+
+        self.assertEqual(
+            self.printed,
+            [
+                "blog: the back-off is cleared (1 attempt had failed). The service tries again at its next pass, "
+                "within 20 seconds."
+            ],
+        )
+        self.assertEqual((self.saved(self.blog)["failures"], self.saved(self.blog)["retry_after"]), (0, 0))
+        self.assertEqual(self.saved(self.shop)["failures"], 3, "the other project keeps its back-off")
+        self.assertEqual(self.saved(self.shop)["retry_after"], self.mac.now + 480)
+
+    def test_a_project_the_configuration_does_not_have_is_refused(self):
+        self.back_off(self.shop, 3, self.mac.now + 480)
+
+        self.assertEqual(self.run_cli("retry", "--project", "web"), 1)
+
+        self.assertEqual(self.printed, ['No project "web" in the configuration. Its projects: shop, blog, docs'])
+        self.assertEqual(self.saved(self.shop)["failures"], 3)
+
+    def test_a_project_without_ready_session_is_refused(self):
+        self.assertEqual(self.run_cli("retry", "--project", "docs"), 1)
+
+        self.assertEqual(
+            self.printed, ['The project "docs" does not have the feature "ready-session". Nothing was cleared.']
+        )
+        self.assertIsNone(self.saved(self.docs))
+
+    def test_without_a_project_with_ready_session_it_is_refused(self):
+        self.configure(docs=("server",))
+
+        self.assertEqual(self.run_cli("retry"), 1)
+
+        self.assertEqual(self.printed, ['No project has the feature "ready-session". Nothing was cleared.'])
+
+    def test_its_help_says_when_the_service_tries(self):
+        self.assertEqual(self.run_cli("retry", "--help"), 0)
+
+        text = " ".join(" ".join(self.printed).split())
+        self.assertIn("--project <name>", text)
+        self.assertIn("next pass, within 20 seconds", text)
+        self.assertIn("creates no session itself", text)
 
 
 class Doctor(CommandLine):
