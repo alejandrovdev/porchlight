@@ -313,7 +313,7 @@ class KeepAwake(Service):
 
         self.serve(QUIET, (False, None, lambda: seen.extend(self.children())))
 
-        self.assertEqual(seen, [(["/usr/bin/caffeinate", "-s", "-w", "4242"], False)], "one, for the service's own pid")
+        self.assertEqual(seen, [(["/usr/bin/caffeinate", "-i", "-s", "-w", "4242"], False)], "one, for the service's own pid")
 
     def test_starts_none_while_no_project_has_the_feature(self):
         self.configure("shop")
@@ -328,7 +328,7 @@ class KeepAwake(Service):
 
         self.serve(change(lambda: self.configure("shop")), (False, None, lambda: seen.extend(self.children())))
 
-        self.assertEqual(seen, [(["/usr/bin/caffeinate", "-s", "-w", "4242"], True)])
+        self.assertEqual(seen, [(["/usr/bin/caffeinate", "-i", "-s", "-w", "4242"], True)])
 
     def test_starts_it_again_when_it_ended_by_itself(self):
         self.configure("shop", features=self.AWAKE)
@@ -342,7 +342,7 @@ class KeepAwake(Service):
 
         self.serve(QUIET)
 
-        self.assertEqual(self.children(), [(["/usr/bin/caffeinate", "-s", "-w", "4242"], True)])
+        self.assertEqual(self.children(), [(["/usr/bin/caffeinate", "-i", "-s", "-w", "4242"], True)])
 
     def test_one_pass_alone_starts_none(self):
         self.configure("shop", features=self.AWAKE)

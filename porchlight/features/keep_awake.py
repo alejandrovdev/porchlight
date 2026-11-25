@@ -1,10 +1,11 @@
-"""The Mac stays awake while the service runs, on AC power only.
+"""The Mac stays awake while the service runs, on AC power and on battery.
 
     wanted(configuration)        whether any project asks for it
     Awake().keep(wanted, mac)    start the child that does it, or end it
 
-One child for the whole service, whatever the number of projects: `caffeinate -s -w <the
-service's pid>`. The display still sleeps, and on battery the Mac sleeps as usual. The child
+One child for the whole service, whatever the number of projects: `caffeinate -i -s -w
+<the service's pid>`. The display still sleeps. On battery the Mac does not sleep while idle,
+but closing its lid still puts it to sleep, as macOS decides. The child
 ends by itself when the service does, however that happens, so a Mac is never kept awake by
 a service that is gone.
 """
@@ -14,8 +15,9 @@ CAFFEINATE = "/usr/bin/caffeinate"
 
 
 def command(pid):
-    """Keep the Mac awake on AC power (-s) for as long as a process runs (-w)."""
-    return [CAFFEINATE, "-s", "-w", str(pid)]
+    """Keep the Mac from idle sleep (-i), and from any sleep on AC power (-s), for as long
+    as a process runs (-w)."""
+    return [CAFFEINATE, "-i", "-s", "-w", str(pid)]
 
 
 def wanted(configuration):

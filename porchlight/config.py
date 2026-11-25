@@ -58,7 +58,7 @@ FEATURES = {
     "live-view": Feature("A read-only tab follows a session the server started", needs=("server", "tabs")),
     "reopen": Feature("A closed session comes back by name, asked from the phone", needs=("ready-session",)),
     "resume-list": Feature("The server's sessions appear in /resume", needs=("server",)),
-    "keep-awake": Feature("The Mac stays awake on AC power while porchlight runs"),
+    "keep-awake": Feature("The Mac stays awake while porchlight runs, on AC power and on battery"),
 }
 
 PRESETS = {
