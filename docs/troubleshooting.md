@@ -75,8 +75,13 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
   `porchlight retry --project <name>` clears the wait. It starts nothing itself and does not
   wake the service: the service tries at its next pass, within 20 seconds.
 - If the session runs but `status` says `not in the app yet`, its transcript does not name a
-  Remote Control session yet. Check that Claude Code is signed in and that your plan
-  includes Remote Control.
+  Remote Control session yet. Most often Claude Code is waiting for you to trust the
+  folder: the first time it opens a repository it asks "Is this a project you created or
+  one you trust?", and the session cannot answer from the phone. `status` then says
+  `waiting for you to trust the folder` and prints the command that attaches to it, and
+  `doctor` reports it. Answer "Yes, I trust this folder" in that session; run `claude` once
+  in the repository and trust it too, so the next sessions do not ask. Otherwise, check
+  that Claude Code is signed in and that your plan includes Remote Control.
 
 ## A tab does not open
 

@@ -72,7 +72,10 @@ runs in the background until you link a folder with `porchlight init`.
    Keep the recommended features it starts with: the next steps need `ready-session` and
    `tabs`.
 
-2. Link a project. Go to its folder (a git repository) and run `init`:
+2. Link a project. Claude Code asks once per folder whether you trust it, and a ready
+   session cannot answer that from the phone: if you have never run `claude` in this
+   repository, do it once and choose "Yes, I trust this folder". Then, in its folder (a git
+   repository), run `init`:
 
    ```sh
    cd ~/Projects/shop
@@ -109,8 +112,9 @@ runs in the background until you link a folder with `porchlight init`.
    changed; its name in the app; and where it runs: the process id and its Remote Control
    session (`not in the app yet` until the app has it), plus `hidden` while it has no tab,
    or `not running`. A free session always waits hidden; a session in use gets a tab, unless
-   the project has no `tabs` or its tab failed three times, and then `status` prints below
-   it the command that attaches to it.
+   its tab failed three times. When no tab will open for a running session (the project has
+   no `tabs`, or its tab was given up on), `status` prints below it the command that
+   attaches to it, for a free session too.
 
 With the `server` feature on, you can also create new sessions on this Mac from the app.
 
@@ -236,7 +240,8 @@ Unlinks the project of a folder: its top folder or any folder inside it. It firs
 everything it is about to do, then:
 
 - removes the project from the configuration;
-- ends its free ready session, if one waits;
+- ends its free ready session, if one waits, and removes its worktree when nothing in it
+  would be lost;
 - unloads and removes its server's background agent, if it has one: **the sessions that
   server started end**;
 - unloads and removes the service too when no project is left;
@@ -244,8 +249,9 @@ everything it is about to do, then:
   folder porchlight made (when it says porchlight did not make that folder, it removed
   nothing there).
 
-It leaves as they are: the sessions in use (it says how to reach each), the project's
-worktrees, its logs, and the running servers of other projects.
+It leaves as they are: the sessions in use (it says how to reach each), the worktrees of
+those sessions, its logs, and the running servers of other projects. The waiting session
+ends, and its worktree is removed when nothing in it would be lost.
 
 It asks for confirmation only when its server is running sessions, because they end and the
 app cannot start them again. Where it cannot ask (no terminal), it refuses unless you give
@@ -519,9 +525,14 @@ them); and the look of the setup screens.
   may do on your Mac without asking first. When you drive sessions from the phone, nobody is
   at the Mac to watch: a mode that lets a session act without asking (`bypassPermissions` is
   the widest) lets it edit files and run commands as you, with your files, your keys and your
-  network, while you only see it on the phone. Choose the narrowest mode the project needs.
-  Remote Control connects these sessions to your Claude account: whoever can use that account
-  in the app can write in them.
+  network, while you only see it on the phone. What the session reads (a file in the
+  repository, a web page, a command's output) can steer it too, and nobody at the Mac would
+  see it happen. Choose the narrowest mode the project needs. Remote Control connects these
+  sessions to your Claude account: whoever can use that account in the app can write in
+  them.
+- **Its tmux server lets a session reach your terminal and clipboard**, as Claude Code asks
+  of tmux: a program in a session can set the clipboard and send codes to the terminal it is
+  shown in (`set-clipboard` and `allow-passthrough` in its tmux configuration).
 - **What porchlight adds to a session**: the settings file it passes holds only the
   permission mode (`{"permissions": {"defaultMode": "<mode>"}}`); every other setting is your
   own. Each ready session gets one note beside its system prompt: that it runs on your Mac
@@ -529,6 +540,10 @@ them); and the look of the setup screens.
   you ask for a closed session.
 
 ### Files it writes
+
+The logs keep sessions' titles and first prompts, and the server's logs its Remote Control
+link; they are not rotated. They sit under `~/Library`, which only you can open; if a
+`PORCHLIGHT_*_DIR` variable moves them, choose a folder others cannot read.
 
 | Where | What |
 | --- | --- |
@@ -601,7 +616,8 @@ porchlight](docs/troubleshooting.md):
    - A server that is running is left running, and the exit code is 1.
      `porchlight uninstall --servers` removes it too: the sessions it started end.
    - The configuration, the state and the logs are kept.
-     `porchlight uninstall --purge` removes them too, only the files porchlight wrote, and
+     `porchlight uninstall --purge` removes them too (the logs of projects no longer linked
+     included), only the files porchlight wrote, and
      refuses while a session or a server still runs. When it says that porchlight did not
      make a folder, it left that folder whole: look at what is in it and remove it yourself.
 
@@ -676,14 +692,20 @@ scratch=$(mktemp -d)
 export PORCHLIGHT_CONFIG="$scratch/config.toml" PORCHLIGHT_STATE_DIR="$scratch/state" \
   PORCHLIGHT_LOG_DIR="$scratch/logs" PORCHLIGHT_LAUNCH_AGENTS_DIR="$scratch/agents" \
   PORCHLIGHT_LABEL=test.porchlight.rehearsal PORCHLIGHT_TMUX_SERVER=porchlight-rehearsal
-python3 -m porchlight doctor
+porchlight doctor
 ```
 
+`porchlight` is the installed command; from a clone, `python3 -m porchlight` runs the code
+of that clone instead. Keep `PORCHLIGHT_TRANSCRIPTS_DIR` at its default, or porchlight
+cannot find Claude Code's transcripts. Run from inside a porchlight session, first
+`unset TMUX TMUX_PANE`, so that nothing reaches the tmux server of that session.
+
 Whatever these variables say is handed on to the agents, tabs and sessions porchlight
-starts, with folders and files made absolute. The rehearsal is still real where it acts: `init`, `apply` and
-`start` load agents into your launchd under the label you chose, and its sessions use your
-Claude Code account and the repository you link. End it with
-`porchlight uninstall --servers --purge` under the same variables.
+starts, with folders and files made absolute. The rehearsal is still real where it acts:
+`init`, `apply` and `start` load agents into your launchd under the label you chose, its
+sessions use your Claude Code account and show in your app, and they need the repository
+you link to be trusted by Claude Code (run `claude` in it once). End it with `porchlight
+deinit <folder>` and `porchlight uninstall --servers --purge` under the same variables.
 
 ## Contributing
 
