@@ -307,7 +307,7 @@ repository knows it.
 | `live-view` | A read-only tab follows a session the server started | `server`, `tabs` |
 | `reopen` | A closed session comes back by name, asked from the phone | `ready-session` |
 | `resume-list` | The server's sessions appear in `/resume` | `server` |
-| `keep-awake` | The Mac stays awake on AC power while porchlight runs | nothing |
+| `keep-awake` | The Mac stays awake while porchlight runs, on AC power and on battery | nothing |
 
 The presets are `minimal` (`server`) and `recommended` (all seven).
 
@@ -336,8 +336,10 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
   continuing it in the terminal does not reach the phone. A copy you continued is never
   overwritten; what the phone adds afterwards goes to a new one.
 - **`keep-awake`**: while the service runs and any project has this feature, the Mac does
-  not go to sleep on AC power (`caffeinate -s`). The display still sleeps, and on battery
-  the Mac sleeps as usual.
+  not go to sleep while idle, on AC power or on battery (`caffeinate -i -s`). The display
+  still sleeps. On battery, closing the lid still puts the Mac to sleep: macOS decides
+  that, so keep the lid open or the Mac plugged in. On battery it drains the battery
+  faster.
 
 ## Configuration
 
@@ -640,8 +642,9 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
 
 ### The Mac sleeps
 
-- Turn on `keep-awake` for a project. It works on AC power only, while the service runs;
-  the display still sleeps. `pmset -g assertions` lists `caffeinate` while it holds the Mac
+- Turn on `keep-awake` for a project. It works while the service runs, on AC power and on
+  battery; the display still sleeps. On battery, closing the lid still puts the Mac to
+  sleep. `pmset -g assertions` lists `caffeinate` while it holds the Mac
   awake.
 - While the Mac sleeps, nothing on it runs, so the app cannot reach its sessions.
 
