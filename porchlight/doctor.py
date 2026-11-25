@@ -238,6 +238,8 @@ def checks(project, mac, modes=installed_modes):
                     results.append(Check(OK, "base branch %s" % base))
                 else:
                     advice = "none could be determined: set `base` for the project in the configuration"
+                    if worktrees.has_remote(mac.git, names.repository(project), ready_sessions.ORIGIN):
+                        advice += ", or run `git remote set-head origin --auto` in the repository"
                     results.append(Check(PROBLEM, "base branch", advice))
     if "claude" in found:
         results.append(mode_check(project, modes(found["claude"], mac)))
