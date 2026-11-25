@@ -11,7 +11,8 @@ sessions write. The process list cannot be watched, which is why the interval st
 of changes makes one pass: after the first, the service lets a moment go by before it acts.
 
 A configuration file that no longer parses is said once, and the last one that could be
-read keeps being served until the file parses again.
+read keeps being served until the file parses again; when none could be read yet, nothing
+is served until then.
 
 Only one service runs at a time: it holds a lock file, and a second one says so and exits.
 SIGTERM and SIGINT end it between two passes, never in the middle of one.
@@ -68,6 +69,7 @@ def serve(
     """
     path = Path(path)
     configuration, mac, problem = config.Config(), None, []
+    served = False  # whether a configuration was ever read
     awake = keep_awake.Awake()
     try:
         while True:
@@ -76,12 +78,16 @@ def serve(
                 if lines != problem:
                     for line in lines:
                         say(line)
-                    if not once:
+                    if served and not once:
                         say("The last configuration that could be read keeps being served.")
+                    elif not once:
+                        say("Nothing is served until the file is fixed.")
                 if once:
                     return 1
-            elif mac is None or found != configuration:
-                configuration, mac = found, mac_for(found)
+            else:
+                served = True
+                if mac is None or found != configuration:
+                    configuration, mac = found, mac_for(found)
             problem = lines
             if mac is None:
                 mac = mac_for(configuration)
@@ -126,6 +132,7 @@ def stop_signals():
 
 def run(path, mac_for, say, lock_file, once=False, serve=serve):
     """The service, or with `once` one pass of it. 1, and said, when another one runs."""
+    state.claim(Path(lock_file).parent, names.MARKER)  # the lock is kept in the tool's state folder
     lock = state.exclusive(lock_file)
     if lock is None:
         say("Another %s is already running. Only one runs at a time." % names.command("run"))

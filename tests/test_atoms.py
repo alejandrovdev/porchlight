@@ -327,6 +327,47 @@ class State(unittest.TestCase):
         self.assertIsNotNone(again)
         again.close()
 
+    def test_a_folder_it_makes_is_marked_and_one_that_was_there_never_is(self):
+        root = Path(self.scratch.name)
+        made, found = root / "deep" / "made", root / "found"
+        found.mkdir()
+
+        self.assertEqual(state.claim(made, ".mark"), made)
+        state.claim(made, ".mark")  # again: nothing to do
+        state.claim(found, ".mark")
+
+        self.assertTrue(state.claimed(made, ".mark"))
+        self.assertEqual([entry.name for entry in made.iterdir()], [".mark"])
+        self.assertFalse(state.claimed(found, ".mark"))
+        self.assertEqual(list(found.iterdir()), [])
+        self.assertFalse(state.claimed(root / "absent", ".mark"))
+
+    def test_a_marked_folder_is_let_go_of_only_once_nothing_else_is_in_it(self):
+        root = Path(self.scratch.name)
+        made = state.claim(root / "made", ".mark")
+        (made / "notes.txt").write_text("")
+
+        state.release(made, ".mark")
+        self.assertEqual(sorted(entry.name for entry in made.iterdir()), [".mark", "notes.txt"])
+
+        (made / "notes.txt").unlink()
+        state.release(made, ".mark")
+        self.assertFalse(made.exists())
+        state.release(made, ".mark")  # gone already: no error
+
+    def test_a_store_marks_the_folder_of_the_tool_it_is_the_first_to_write_in(self):
+        root = Path(self.scratch.name) / "state"
+        marked = []
+        store = state.Store(root / "projects" / "shop" / "view-tabs.json", prepare=lambda: marked.append(root.exists()))
+
+        store.load({})
+        self.assertEqual(marked, [], "reading makes nothing")
+        store.save({})
+        with store.locked():
+            pass
+
+        self.assertEqual(marked, [False, True], "asked before its own folder is made, each time it writes")
+
 
 class Logs(unittest.TestCase):
     def test_a_dated_line_starts_with_the_date_a_log_line_has(self):

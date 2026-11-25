@@ -4,11 +4,16 @@ it running.
     definition(label, words, environment, log)   what launchd is told about one agent
     file(folder, label), read, write, remove     the property list that holds it
     labels(folder)                               the agents that have a file in a folder
-    Launchd().loaded()                           the labels launchd has loaded
+    Launchd().loaded()                           the labels launchd lists as loaded
+    Launchd().state(label)                       whether launchd knows one label: LOADED, GONE or UNKNOWN
     Launchd().load(path), .unload(label)         start one from its file, stop one
 
 An agent is loaded from a file and from then on known by its label. Unloading one stops its
 program; the file stays until it is removed, and launchd loads it again at the next login.
+
+The list is that of the session the command runs in, which may not be the one the agents
+were loaded in; asking about one label names the person's own session. Only launchd saying
+that it does not know a label means the agent is gone: any other failure tells nothing.
 """
 
 import os
@@ -19,6 +24,9 @@ from types import SimpleNamespace
 
 LAUNCHCTL = "/bin/launchctl"
 SUFFIX = ".plist"
+MODE = 0o644  # launchd loads no file that someone else may write
+LOADED, GONE, UNKNOWN = "loaded", "gone", "unknown"  # what launchd says of one label
+NO_SUCH_SERVICE = 113  # what `launchctl print` exits with for a label launchd does not know
 
 
 class Unavailable(Exception):
@@ -71,11 +79,15 @@ def read(path):
 
 
 def write(path, told):
-    """Write a definition, replacing the file in one step."""
+    """Write a definition, replacing the file in one step; its owner alone may change it,
+    whatever the umask. Raises ValueError, TypeError or OverflowError for a value a property
+    list cannot hold, and nothing is written."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    text = plistlib.dumps(told, fmt=plistlib.FMT_XML, sort_keys=True)
     draft = path.with_name(path.name + ".writing")
-    draft.write_bytes(plistlib.dumps(told, fmt=plistlib.FMT_XML, sort_keys=True))
+    draft.write_bytes(text)
+    os.chmod(draft, MODE)
     os.replace(draft, path)
 
 
@@ -124,8 +136,14 @@ class Launchd:
                 found.add(columns[2])
         return found
 
+    def state(self, label):
+        """What launchd says of one label in the person's own session: LOADED, GONE when it
+        says it does not know it, and UNKNOWN for anything else, which tells nothing."""
+        code = self.ask("print", "%s/%s" % (self.domain(), label)).returncode
+        return LOADED if code == 0 else GONE if code == NO_SUCH_SERVICE else UNKNOWN
+
     def is_loaded(self, label):
-        return self.ask("print", "%s/%s" % (self.domain(), label)).returncode == 0
+        return self.state(label) == LOADED
 
     def load(self, path):
         return self.ask("bootstrap", self.domain(), str(path))

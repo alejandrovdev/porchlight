@@ -255,6 +255,27 @@ class BrokenConfiguration(Service):
         self.assertEqual(self.passes, [[], ["shop"], ["shop"]])
         self.assertEqual(self.said[0], "The configuration %s has problems:" % self.file)
 
+    def test_a_file_broken_from_the_start_is_not_said_to_keep_an_earlier_one_served(self):
+        self.file.write_text("terminal = 7\n")
+
+        self.serve(QUIET)
+
+        self.assertEqual(
+            self.said,
+            [
+                "The configuration %s has problems:" % self.file,
+                "terminal: must be text",
+                "Nothing is served until the file is fixed.",
+            ],
+        )
+
+    def test_a_file_that_breaks_after_one_was_read_keeps_that_one_served_even_when_it_had_no_project(self):
+        self.file.write_text("")
+
+        self.serve(change(lambda: self.file.write_text("terminal = 7\n")), QUIET)
+
+        self.assertEqual(self.said[-1], "The last configuration that could be read keeps being served.")
+
     def test_once_refuses_a_file_that_does_not_parse(self):
         self.file.write_text("terminal = \n")
 

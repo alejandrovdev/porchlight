@@ -177,6 +177,78 @@ class WholeConfiguration(Scratch):
         self.assertIn("the pass failed: RuntimeError('broken')", self.mac.log_text(shop))
 
 
+class RemovedProject(Scratch):
+    """A project that left the configuration still has a folder in the tool's state."""
+
+    def ends_when_asked(self):
+        def terminate(pid):
+            self.mac.terminated.append(pid)
+            self.mac.ps = "".join(line for line in self.mac.ps.splitlines(True) if not line.startswith("%d " % pid))
+
+        self.mac.terminate = terminate
+
+    def test_its_free_session_is_let_go_as_when_the_feature_is_turned_off(self):
+        shop, blog = self.project("shop"), self.project("blog")
+        record = self.ready_session(shop, A, "free", 501)
+        Path(record["worktree"]).mkdir(parents=True)
+        self.ends_when_asked()
+
+        passes.run(config.Config("warp", (blog,)), self.mac)
+
+        self.assertEqual(self.mac.terminated, [501])
+        self.assertEqual(self.ready(shop), {})
+        self.assertIn("the ready session is turned off", self.mac.log_text(shop))
+        self.assertIn("removed the worktree porchlight-shop-aaaaaaaa", self.mac.log_text(shop))
+        self.assertEqual([record["state"] for record in self.ready(blog).values()], ["free"], "the others go on")
+
+    def test_its_sessions_in_use_and_its_closed_ones_are_left_as_they_are(self):
+        shop = self.project("shop")
+        self.ready_session(shop, A, "used", 501, prompt="Fix the header", shown=True)
+        self.ready_session(shop, B, "closed", 502, tidied=True)
+        self.mac.ps = self.mac.ps.replace(f"502 claude --session-id {B} --remote-control\n", "")
+        before = self.ready(shop)
+
+        passes.run(config.Config(), self.mac)
+
+        self.assertEqual(self.mac.terminated, [])
+        self.assertEqual(self.ready(shop), before)
+        self.assertEqual(self.terminal.tabs, [])
+
+    def test_a_folder_of_the_state_that_holds_no_free_session_is_not_even_opened_as_a_project(self):
+        shop = self.project("shop")
+        self.state_folder(shop).mkdir(parents=True)
+        (self.state_folder(shop).parent / "Not A Project").mkdir()
+
+        passes.run(config.Config(), self.mac)
+
+        self.assertEqual(self.mac.log_text(shop), "")
+        self.assertEqual(self.mac.git_runner.calls, [])
+
+    def test_free_sessions_whose_worktrees_name_two_folders_are_left_as_they_are(self):
+        shop, elsewhere = self.project("shop"), self.project("elsewhere")
+        self.ready_session(shop, A, "free", 501)
+        moved = names.repository(elsewhere) / ".claude" / "worktrees" / names.worktree(shop, B)
+        self.ready_session(shop, B, "free", 502, worktree=str(moved))
+        before = self.ready(shop)
+        self.ends_when_asked()
+
+        passes.run(config.Config(), self.mac)
+
+        self.assertEqual(self.mac.terminated, [], "the state does not say which folder the project was in")
+        self.assertEqual(self.ready(shop), before)
+
+    def test_a_free_session_whose_repository_is_gone_is_left_and_the_pass_goes_on(self):
+        shop, blog = self.project("shop"), self.project("blog")
+        self.ready_session(shop, A, "free", 501)
+        (self.root / "shop").rmdir()
+
+        passes.run(config.Config("warp", (blog,)), self.mac)
+
+        self.assertEqual(self.mac.terminated, [])
+        self.assertIn(A, self.ready(shop))
+        self.assertEqual([record["state"] for record in self.ready(blog).values()], ["free"])
+
+
 class Features(Scratch):
     def test_each_project_gets_only_what_its_features_give(self):
         shop, blog = self.project("shop", features=("server",)), self.project("blog")

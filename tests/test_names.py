@@ -157,6 +157,18 @@ class Agents(unittest.TestCase):
         self.assertTrue(names.own_label("test.porchlight.scratch", {"PORCHLIGHT_LABEL": "test.porchlight.scratch"}))
         self.assertFalse(names.own_label(own[0], {"PORCHLIGHT_LABEL": "test.porchlight.scratch"}))
 
+    def test_the_start_of_the_labels_must_be_a_reverse_domain_name(self):
+        for label in ("", "test.porchlight.scratch", "io.github.someone.porchlight", "a-b.c-d", "A1.b2"):
+            self.assertEqual(names.label_problem({"PORCHLIGHT_LABEL": label}), "", label)
+        self.assertEqual(names.label_problem({}), "")
+
+        for label in ("porchlight", "../../escape", "a/b", " ", "com.example.", ".com.example", "com..example", "com.example\n", "com.exam ple"):
+            self.assertEqual(
+                names.label_problem({"PORCHLIGHT_LABEL": label}),
+                "PORCHLIGHT_LABEL must be a reverse domain name such as com.example.porchlight (letters, digits and "
+                "hyphens, in parts joined by dots), not %r" % label,
+            )
+
     def test_the_agents_are_kept_where_a_persons_own_are_unless_a_variable_moves_them(self):
         self.assertEqual(names.launch_agents({}), Path.home() / "Library" / "LaunchAgents")
         self.assertEqual(names.launch_agents({"PORCHLIGHT_LAUNCH_AGENTS_DIR": "/scratch/agents"}), Path("/scratch/agents"))
@@ -206,6 +218,26 @@ class Carried(unittest.TestCase):
         self.assertEqual(names.carried(environ, "/scratch/config.toml"), {"PORCHLIGHT_CONFIG": "/scratch/config.toml"})
         self.assertEqual(names.carried(environ, names.default_config()), {})
         self.assertEqual(names.carried(environ), environ, "no file was named: the environment's own stands")
+
+    def test_a_folder_or_a_file_named_from_where_the_command_runs_is_carried_whole(self):
+        environ = {
+            "PORCHLIGHT_STATE_DIR": "relative/state",
+            "PORCHLIGHT_LOG_DIR": "relative/logs",
+            "PORCHLIGHT_TRANSCRIPTS_DIR": "transcripts",
+            "PORCHLIGHT_LAUNCH_AGENTS_DIR": "./agents",
+            "PORCHLIGHT_WARP_TAB_CONFIGS": "tabs",
+            "PORCHLIGHT_CONFIG": "relative.toml",
+            "PORCHLIGHT_TMUX_SERVER": "porchlight-test",
+            "PORCHLIGHT_LABEL": "test.porchlight.scratch",
+            "PORCHLIGHT_CLAUDE": "claude",
+        }
+
+        carried = names.carried(environ)
+
+        for name in ("STATE_DIR", "LOG_DIR", "TRANSCRIPTS_DIR", "LAUNCH_AGENTS_DIR", "WARP_TAB_CONFIGS", "CONFIG"):
+            self.assertEqual(carried["PORCHLIGHT_" + name], os.path.abspath(environ["PORCHLIGHT_" + name]), name)
+        for name in ("TMUX_SERVER", "LABEL", "CLAUDE"):
+            self.assertEqual(carried["PORCHLIGHT_" + name], environ["PORCHLIGHT_" + name], "no folder: as it is")
 
 
 if __name__ == "__main__":

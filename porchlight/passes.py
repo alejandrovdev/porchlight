@@ -7,14 +7,15 @@
     project_status(project, mac)   print one project's sessions, of the kinds it has
 
 Each project runs by itself: one whose folder is missing, or that fails, is logged and the
-next still runs. Each part of a project's pass runs by itself too: one that fails is
+next still runs. A project the configuration no longer has gets its free session ended, as
+when its feature is turned off. Each part of a project's pass runs by itself too: one that fails is
 logged and the next still runs, and the next pass tries again.
 
 A part does nothing for a project that does not have its feature, so a pass asks nothing
 of a project beyond what its features need: no terminal, no tmux and no server.
 """
 
-from . import names
+from . import config, names
 from .features import ready_sessions, resume_list, view_tabs
 
 STEPS = (
@@ -41,6 +42,23 @@ def run(configuration, mac, steps=STEPS):
             run_project(project, mac, steps)
         except Exception as error:  # one project never stops the others
             mac.log(project, "the pass failed: %r" % (error,))
+    let_go_of_removed(configuration, mac)
+
+
+def let_go_of_removed(configuration, mac):
+    """End the free session of each project the configuration no longer has, the way a
+    feature turned off ends it: only a session in the tool's own state, and only while its
+    process runs. A project of the state that holds no free session is not even looked at."""
+    configured = {project.name for project in configuration.projects}
+    for name in mac.recorded_projects():
+        if name in configured:
+            continue
+        try:
+            project = ready_sessions.left_behind(name, mac)
+            if project is not None:
+                ready_sessions.let_go(project, mac)
+        except Exception as error:  # one project never stops the others
+            mac.log(config.Project(name, "", "", ()), "letting go of its free session failed: %r" % (error,))
 
 
 def watched(configuration, mac):

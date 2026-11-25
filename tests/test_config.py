@@ -150,6 +150,16 @@ session_prefix = "shop"
             ],
         )
 
+    def test_a_name_a_mode_or_a_prefix_that_ends_with_a_new_line_is_refused(self):
+        named = '[projects."shop\\n"]\npath = "~/Projects/shop"\npermission_mode = "manual"\npreset = "minimal"\n'
+        self.assertEqual([key for key, _ in problems(named)], ["projects.shop\n"])
+
+        mode = ONE.replace('"manual"', '"manual\\n"')
+        self.assertEqual(problems(mode), [("projects.shop.permission_mode", "must be one word")])
+
+        prefix = ONE + 'session_prefix = "Shop\\n"\n'
+        self.assertEqual([key for key, _ in problems(prefix)], ["projects.shop.session_prefix"])
+
     def test_text_that_is_not_toml_is_one_problem(self):
         found = problems("terminal = \n")
 

@@ -2,8 +2,10 @@
 each, and what `apply`, `start`, `stop` and `uninstall` then do. launchctl is a stand-in
 and the agents' folder a scratch one: nothing is loaded, unloaded or signalled."""
 
+import dataclasses
 import itertools
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -739,7 +741,7 @@ class Uninstall(OnTheMac):
         self.assertFalse(given.exists())
 
     def test_purge_removes_only_the_files_the_tool_makes(self):
-        (self.root / "state" / "projects" / "blog").mkdir(parents=True, exist_ok=True)
+        self.mac.store(self.blog, ready_sessions.STATE).save({})  # the tool makes its folder, and marks it
         mine = [
             self.root / "state" / "notes.txt",
             self.root / "state" / "projects" / "blog" / "keep.json",
@@ -752,8 +754,9 @@ class Uninstall(OnTheMac):
         self.assertEqual(self.purged(), 0)
 
         self.assertTrue(all(path.exists() for path in mine))
-        self.assertEqual(sorted(path.name for path in (self.root / "state").rglob("*") if path.is_file()), ["keep.json", "notes.txt"])
-        self.assertEqual([path.name for path in (self.root / "logs").iterdir()], ["another.tool.log"])
+        kept = sorted(path.name for path in (self.root / "state").rglob("*") if path.is_file())
+        self.assertEqual(kept, [self.MARKER, "keep.json", "notes.txt"], "the folder is still the tool's: its marker stays")
+        self.assertEqual(sorted(path.name for path in (self.root / "logs").iterdir()), [self.MARKER, "another.tool.log"])
 
     def test_purge_refuses_while_a_session_of_the_tools_state_still_runs(self):
         self.mac.config_file.write_text("")
@@ -804,6 +807,441 @@ class Uninstall(OnTheMac):
         self.assertEqual(self.mac.launchctl.did(), [])
         self.assertEqual(self.mac.terminated, [])
         self.assertEqual(len(self.files()), 2)
+
+    def test_ends_the_free_session_of_a_project_the_configuration_no_longer_has(self):
+        gone = standins.project("gone", str(self.root / "gone"))
+        self.session(gone, A, "free", 603)
+        self.ends_when_asked()
+
+        self.assertEqual(self.uninstall(servers=True), 0)
+
+        self.assertEqual(self.mac.terminated, [603])
+        self.assertEqual(self.sessions(gone), {}, "let go as a feature turned off lets go of it")
+        self.assertIn("removed the worktree porchlight-gone-aaaaaaaa", self.mac.log_text(gone))
+        self.assertEqual(self.printed[2:], ["gone: ended the free session it held", "No session is running.", self.printed[-1]])
+
+    def test_leaves_the_session_in_use_of_a_project_the_configuration_no_longer_has(self):
+        gone = standins.project("gone", str(self.root / "gone"))
+        self.session(gone, A, "free", 603)
+        self.session(gone, B, "used", 604)
+        self.ends_when_asked()
+
+        self.assertEqual(self.uninstall(servers=True), 0)
+
+        self.assertEqual(self.mac.terminated, [603], "only the session nobody used")
+        self.assertEqual(self.sessions(gone)[B]["state"], "used")
+        self.assertIn("1 session in use keeps running.", self.printed)
+
+    def test_never_says_that_no_session_runs_while_a_free_one_did_not_end(self):
+        self.session(self.shop, A, "free", 601)  # asked to end, it keeps running
+
+        self.assertEqual(self.uninstall(servers=True), 1)
+
+        self.assertNotIn("No session is running.", self.printed)
+        self.assertIn("1 free session could not be ended and still runs.", self.printed)
+
+    def test_counts_the_free_sessions_that_did_not_end_apart_from_those_in_use(self):
+        gone = standins.project("gone", str(self.root / "gone"))
+        self.session(gone, A, "free", 603)
+        self.session(self.blog, B, "used", 602)
+        (self.root / "gone").rename(self.root / "moved")  # nothing can be tidied in a folder that is gone
+
+        self.assertEqual(self.uninstall(servers=True), 1)
+
+        self.assertEqual(self.mac.terminated, [])
+        self.assertEqual(
+            self.printed[2:4],
+            ["1 session in use keeps running.", "1 free session could not be ended and still runs."],
+        )
+
+    def test_works_without_a_configuration_from_the_labels_and_the_state_folders(self):
+        self.session(self.shop, A, "free", 601)
+        self.ends_when_asked()
+        self.printed.clear()
+
+        code = agents.uninstall(config.Config(), self.mac, self.printed.append, servers=True, purge=True, readable=False)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL), ("unload", SHOP)])
+        self.assertEqual(self.mac.terminated, [601])
+        self.assertFalse((self.root / "state").exists())
+
+
+    MARKER = ".porchlight"  # what says that the tool made a folder: only there does a purge delete
+
+    def test_the_folders_the_tool_makes_carry_its_marker(self):
+        self.mac.store(self.blog, ready_sessions.STATE).save({})
+
+        self.assertTrue((self.root / "state" / self.MARKER).is_file())
+        self.assertTrue((self.root / "logs" / self.MARKER).is_file(), "made when the first agent was loaded")
+
+    def test_a_folder_that_was_already_there_is_never_marked(self):
+        elsewhere = standins.StandInMac(self.root / "elsewhere")
+        (self.root / "elsewhere" / "state").mkdir(parents=True)
+        (self.root / "elsewhere" / "logs").mkdir()
+
+        elsewhere.store(self.blog, ready_sessions.STATE).save({})
+        elsewhere.log(self.blog, "something happened")
+
+        self.assertFalse((self.root / "elsewhere" / "state" / self.MARKER).exists())
+        self.assertFalse((self.root / "elsewhere" / "logs" / self.MARKER).exists())
+
+    def test_purge_deletes_nothing_in_a_folder_the_tool_did_not_make_and_says_so(self):
+        home, shared = self.root / "home", self.root / "shared"
+        theirs = [
+            home / "projects" / "webshop" / "settings.json",
+            home / "projects" / "webshop" / "settings.json.next",
+            home / "projects" / "webshop" / "ready-sessions.json",
+            home / "projects" / "webshop" / "view-tabs.lock",
+            home / "service.lock",
+            shared / "webshop.log",
+            shared / "agent.service.log",
+        ]
+        for path in theirs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("the person's own")
+        self.mac.environ["PORCHLIGHT_STATE_DIR"] = str(home)
+        self.mac.environ["PORCHLIGHT_LOG_DIR"] = str(shared)
+        self.mac.launchctl.loaded.clear()
+
+        self.assertEqual(self.uninstall(servers=True, purge=True), 1)
+
+        self.assertEqual([path for path in theirs if not path.exists()], [])
+        self.assertFalse((home / self.MARKER).exists())
+        self.assertIn("%s was left as it is: porchlight did not make that folder." % home, self.printed)
+        self.assertIn("%s was left as it is: porchlight did not make that folder." % shared, self.printed)
+        self.assertEqual(self.printed[-1], "Removed the configuration.")
+
+    def test_purge_keeps_the_marker_of_a_folder_that_still_holds_something(self):
+        self.mac.store(self.blog, ready_sessions.STATE).save({})
+        (self.root / "state" / "notes.txt").write_text("the person's own")
+
+        self.assertEqual(self.purged(), 0)
+
+        self.assertEqual(sorted(path.name for path in (self.root / "state").iterdir()), [self.MARKER, "notes.txt"])
+        self.assertFalse((self.root / "logs").exists())
+
+
+class OneServerForAFolder(OnTheMac):
+    """A folder is served by one server: a project that changed its name gets no second one
+    beside the server left running in its folder."""
+
+    def setUp(self):
+        super().setUp()
+        self.before = self.configuration(shop=("server",))
+        self.after = config.Config(None, (dataclasses.replace(self.before.projects[0], name="store"),))
+        self.apply(self.before)
+        self.mac.launchctl.calls.clear()
+
+    STORE = standins.LABEL + ".server.store"
+
+    def test_a_renamed_project_gets_no_server_beside_the_one_left_running_in_its_folder(self):
+        self.assertEqual(self.apply(self.after), 1)
+
+        self.assertEqual(self.mac.launchctl.did(), [])
+        self.assertEqual(self.mac.launchctl.loaded, {SERVICE_LABEL, SHOP})
+        self.assertEqual(self.files(), [SERVICE_LABEL + ".plist", SHOP + ".plist"], "no file is written for it")
+        self.assertEqual(
+            self.printed,
+            [
+                SERVICE_LABEL + ": already loaded, nothing changed",
+                "%s: not loaded: %s is left running in the same folder, %s; porchlight apply --servers replaces it"
+                % (self.STORE, SHOP, names.repository(self.before.projects[0])),
+                SHOP + ": left running, though the configuration no longer has it",
+                "A running server is restarted or removed only when asked, because the app cannot start its "
+                "sessions again. To include them (shop): porchlight apply --servers",
+                CHECK,
+            ],
+        )
+
+    def test_with_servers_the_old_one_is_removed_first_and_then_the_new_one_loaded(self):
+        self.assertEqual(self.apply(self.after, servers=True), 0)
+
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SHOP), ("load", self.STORE)])
+        self.assertEqual(self.files(), [SERVICE_LABEL + ".plist", self.STORE + ".plist"])
+        self.assertEqual(self.printed[1:3], [SHOP + ": unloaded and removed", self.STORE + ": loaded"])
+
+    def test_the_new_one_is_not_loaded_when_the_old_one_does_not_unload(self):
+        self.mac.launchctl.stuck.add(SHOP)
+
+        self.assertEqual(self.apply(self.after, servers=True), 1)
+
+        self.assertNotIn(("load", self.STORE), self.mac.launchctl.did())
+        self.assertNotIn(self.STORE + ".plist", self.files())
+
+    def test_a_changed_server_is_not_restarted_into_the_folder_of_one_that_did_not_unload(self):
+        stale = dict(launchd.read(launchd.file(self.folder, SHOP)), Label=self.STORE, ThrottleInterval=1)
+        stale["ProgramArguments"] = stale["ProgramArguments"][:-1] + ["store"]
+        launchd.write(launchd.file(self.folder, self.STORE), stale)
+        self.mac.launchctl.loaded.add(self.STORE)
+        self.mac.launchctl.stuck.add(SHOP)
+
+        self.assertEqual(self.apply(self.after, servers=True), 1)
+
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SHOP)], "the store server is not touched")
+        self.assertIn(
+            "%s: not restarted: %s still runs in the same folder, %s"
+            % (self.STORE, SHOP, names.repository(self.before.projects[0])),
+            self.printed,
+        )
+
+    def test_a_server_in_another_folder_is_loaded_beside_one_left_running(self):
+        both = config.Config(None, self.after.projects + self.configuration(blog=("server",)).projects)
+
+        self.apply(both)
+
+        self.assertEqual(self.mac.launchctl.did(), [("load", BLOG)])
+
+    def test_no_server_is_loaded_beside_one_left_running_whose_folder_cannot_be_read(self):
+        launchd.file(self.folder, SHOP).unlink()
+
+        self.assertEqual(self.apply(self.after), 1)
+
+        self.assertEqual(self.mac.launchctl.did(), [])
+        self.assertIn(
+            "%s: not loaded: %s is left running and its folder is not known; porchlight apply --servers replaces it"
+            % (self.STORE, SHOP),
+            self.printed,
+        )
+
+
+class WhatLaunchdSays(OnTheMac):
+    """An agent is loaded when the list has it or launchd knows it by its label, and gone
+    only when launchd says it does not know it."""
+
+    def setUp(self):
+        super().setUp()
+        self.both = self.configuration(shop=("server",), blog=("server",))
+        self.apply(self.both)
+        self.mac.launchctl.calls.clear()
+
+    def blind(self):
+        """A list that answers and leaves out the agents of this install."""
+        self.mac.launchctl.unlisted = {SERVICE_LABEL, SHOP, BLOG}
+
+    def test_a_running_server_the_list_leaves_out_keeps_its_file(self):
+        self.blind()
+        written = self.definition(SHOP)
+        self.mac.found["tmux"] = "/elsewhere/bin/tmux"
+
+        self.assertEqual(self.apply(self.both), 0)
+
+        self.assertEqual(self.definition(SHOP), written)
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL), ("load", SERVICE_LABEL)])
+        self.assertEqual(self.printed[1], SHOP + ": left running as it is, though its definition changed")
+
+    def test_without_a_project_the_servers_the_list_leaves_out_keep_their_files(self):
+        self.blind()
+
+        self.assertEqual(self.apply(config.Config()), 0)
+
+        self.assertEqual(self.files(), [BLOG + ".plist", SHOP + ".plist"])
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL)])
+
+    def test_uninstall_purges_nothing_while_a_server_the_list_leaves_out_runs(self):
+        self.blind()
+        self.mac.config_file.write_text("")
+
+        self.assertEqual(agents.uninstall(self.both, self.mac, self.printed.append, purge=True), 1)
+
+        self.assertEqual(self.files(), [BLOG + ".plist", SHOP + ".plist"])
+        self.assertEqual(self.mac.launchctl.loaded, {SHOP, BLOG})
+        self.assertTrue(self.mac.config_file.exists())
+
+    def test_every_own_label_that_has_a_file_is_asked_about_by_itself(self):
+        self.apply(self.both)
+
+        asked = [words[2] for words in self.mac.launchctl.calls if words[1] == "print"]
+        self.assertEqual(sorted(asked), sorted("gui/501/" + label for label in (SERVICE_LABEL, SHOP, BLOG)))
+
+    def test_nothing_changes_when_launchd_cannot_say_whether_an_agent_is_loaded(self):
+        self.blind()
+        self.mac.launchctl.untold[SHOP] = 1
+        before = self.everything()
+
+        for command in (
+            lambda: self.apply(config.Config(), servers=True),
+            lambda: agents.start(self.mac, self.printed.append),
+            lambda: agents.stop(self.mac, self.printed.append, servers=True),
+            lambda: agents.uninstall(self.both, self.mac, self.printed.append, servers=True, purge=True),
+        ):
+            self.printed.clear()
+            self.assertEqual(command(), 1)
+            self.assertEqual(self.everything(), before)
+            self.assertEqual(
+                self.printed, ["launchd could not say whether %s is loaded. Nothing was changed." % SHOP]
+            )
+
+    def unloads_without_saying_so(self):
+        """Once asked to unload an agent, launchd no longer says whether it is loaded."""
+        self.mac.launchctl.on_unload = lambda label: self.mac.launchctl.untold.update({label: 1})
+
+    NOT_TOLD = ": launchd could not say whether it was unloaded, so it was left as it is"
+
+    def test_an_agent_is_gone_only_when_launchd_says_it_does_not_know_it(self):
+        self.unloads_without_saying_so()
+
+        self.assertEqual(self.apply(config.Config(), servers=True), 1)
+
+        self.assertEqual(len(self.files()), 3, "no file is removed of an agent that may still run")
+        self.assertEqual(self.printed[:3], [label + self.NOT_TOLD for label in (SERVICE_LABEL, BLOG, SHOP)])
+
+    def test_a_changed_agent_is_not_loaded_again_before_launchd_says_it_is_gone(self):
+        self.unloads_without_saying_so()
+        written = self.definition(SERVICE_LABEL)
+        self.mac.found["tmux"] = "/elsewhere/bin/tmux"
+
+        self.assertEqual(self.apply(self.both), 1)
+
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL)])
+        self.assertEqual(self.definition(SERVICE_LABEL), written)
+
+    def test_stop_says_which_agent_it_could_not_tell_unloaded(self):
+        self.unloads_without_saying_so()
+        self.printed.clear()
+
+        self.assertEqual(agents.stop(self.mac, self.printed.append), 1)
+
+        self.assertEqual(self.printed[0], SERVICE_LABEL + self.NOT_TOLD)
+
+    def test_uninstall_removes_nothing_of_an_agent_it_could_not_tell_unloaded(self):
+        self.unloads_without_saying_so()
+
+        self.assertEqual(agents.uninstall(self.both, self.mac, self.printed.append, servers=True, purge=True), 1)
+
+        self.assertEqual(len(self.files()), 3)
+        self.assertEqual(self.printed[-1], "Nothing else was done: run this again once every agent is unloaded.")
+
+
+class WhoMayAsk(OnTheMac):
+    def setUp(self):
+        super().setUp()
+        self.both = self.configuration(shop=("server",), blog=("server",))
+        self.apply(self.both)
+        self.mac.launchctl.calls.clear()
+        self.commands = (
+            lambda: self.apply(config.Config(), servers=True),
+            lambda: agents.start(self.mac, self.printed.append),
+            lambda: agents.stop(self.mac, self.printed.append, servers=True),
+            lambda: agents.uninstall(self.both, self.mac, self.printed.append, servers=True, purge=True),
+        )
+
+    def test_root_is_refused_by_every_command_that_changes_launchd_or_deletes_files(self):
+        self.mac.uid = 0
+        before = self.everything()
+
+        for command in self.commands:
+            self.printed.clear()
+            self.assertEqual(command(), 1)
+            self.assertEqual(self.mac.launchctl.calls, [], "launchd was not even asked")
+            self.assertEqual(self.everything(), before)
+            self.assertEqual(
+                self.printed,
+                ["Run this as the person who is logged in, without sudo: root has other agents. Nothing was changed."],
+            )
+
+    def test_a_label_that_is_no_reverse_domain_name_is_refused_before_anything_changes(self):
+        before = self.everything()
+
+        for label in ("../../escape", "a/b", " ", "porchlight", "com.example.", ".com.example", "com.example\n"):
+            self.mac.environ["PORCHLIGHT_LABEL"] = label
+            for command in self.commands:
+                self.printed.clear()
+                self.assertEqual(command(), 2, label)
+                self.assertEqual(self.mac.launchctl.calls, [])
+                self.assertEqual(self.everything(), before)
+                self.assertEqual(len(self.printed), 1)
+                self.assertIn("PORCHLIGHT_LABEL", self.printed[0])
+
+
+class OwnFiles(OnTheMac):
+    """A file is the tool's when it is named after one of its labels and runs the tool."""
+
+    FOREIGN = {"ProgramArguments": ["/usr/local/bin/another", "run"]}
+
+    def plant(self, *labels):
+        for label in labels:
+            launchd.write(launchd.file(self.folder, label), dict(self.FOREIGN, Label=label))
+
+    def test_a_file_under_one_of_its_labels_that_does_not_run_the_tool_is_never_touched(self):
+        self.plant(SERVICE_LABEL, SHOP)
+        self.mac.launchctl.loaded.update({SERVICE_LABEL, SHOP})
+        before = self.everything()
+
+        self.assertEqual(self.apply(config.Config(), servers=True), 0)
+        agents.start(self.mac, self.printed.append)
+        agents.stop(self.mac, self.printed.append, servers=True)
+        agents.uninstall(config.Config(), self.mac, self.printed.append, servers=True, purge=True)
+
+        self.assertEqual(self.everything(), before)
+        self.assertEqual(self.definition(SHOP), dict(self.FOREIGN, Label=SHOP))
+
+    def test_only_the_arguments_the_tool_itself_writes_make_a_file_its_own(self):
+        shapes = {
+            ("/tools/porchlight", "run"): [SERVICE_LABEL],
+            ("/some/python3", "-m", "porchlight", "run"): [SERVICE_LABEL],
+            ("/tools/porchlight", "server", "shop"): [SHOP],
+            ("/tools/porchlight", "server", "blog"): [],  # another project's
+            ("/tools/porchlight", "run", "--once"): [],
+            ("/tools/another", "run"): [],
+            ("run",): [],
+            (): [],
+        }
+        for words, own in shapes.items():
+            for label in (SERVICE_LABEL, SHOP):
+                launchd.write(launchd.file(self.folder, label), {"Label": label, "ProgramArguments": list(words)})
+
+            self.assertEqual([agent.label for agent in agents.installed(self.mac)], own, words)
+
+    def test_an_agent_that_is_loaded_and_has_no_file_is_known_by_its_name(self):
+        self.mac.launchctl.loaded.update({SERVICE_LABEL, SHOP})
+
+        self.assertEqual(agents.uninstall(config.Config(), self.mac, self.printed.append, servers=True), 0)
+
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL), ("unload", SHOP)])
+
+    def test_apply_writes_over_no_file_that_is_not_its_own_and_says_so(self):
+        self.plant(SHOP)
+
+        self.assertEqual(self.apply(self.configuration(shop=("server",))), 1)
+
+        self.assertEqual(self.definition(SHOP), dict(self.FOREIGN, Label=SHOP))
+        self.assertEqual(self.mac.launchctl.did(), [("load", SERVICE_LABEL)])
+        self.assertEqual(
+            self.printed[1],
+            "%s: left as it is: the file %s was not written by porchlight. Move it away, and run this again."
+            % (SHOP, launchd.file(self.folder, SHOP)),
+        )
+
+
+class Written(OnTheMac):
+    def test_relative_folders_reach_the_agents_as_absolute_paths(self):
+        self.mac.environ.update(
+            PORCHLIGHT_STATE_DIR="relative/state", PORCHLIGHT_LOG_DIR="relative/logs", PORCHLIGHT_CONFIG="relative.toml"
+        )
+        self.mac.config_file = None
+
+        for agent in agents.wanted(self.configuration(shop=("server",)), self.mac):
+            told = agent.definition
+            self.assertTrue(os.path.isabs(told["StandardOutPath"]), told["StandardOutPath"])
+            self.assertTrue(os.path.isabs(told["StandardErrorPath"]))
+            self.assertEqual(os.path.dirname(told["StandardOutPath"]), os.path.abspath("relative/logs"))
+            environment = told["EnvironmentVariables"]
+            self.assertEqual(environment["PORCHLIGHT_STATE_DIR"], os.path.abspath("relative/state"))
+            self.assertEqual(environment["PORCHLIGHT_LOG_DIR"], os.path.abspath("relative/logs"))
+            self.assertEqual(environment["PORCHLIGHT_CONFIG"], os.path.abspath("relative.toml"))
+
+    def test_a_value_a_property_list_cannot_hold_is_said_for_its_agent_and_not_raised(self):
+        for odd in ("a\x1bb", "caf\udce9"):
+            self.mac.environ["PORCHLIGHT_TMUX_SERVER"] = odd
+
+            self.assertEqual(self.apply(self.configuration(shop=("server",))), 1)
+
+            self.assertEqual(self.files(), [])
+            self.assertEqual(self.mac.launchctl.did(), [])
+            self.assertEqual(len(self.printed), 3)
+            self.assertTrue(self.printed[0].startswith(SERVICE_LABEL + ": could not be written: "), self.printed[0])
+            self.assertTrue(self.printed[1].startswith(SHOP + ": could not be written: "), self.printed[1])
 
 
 if __name__ == "__main__":

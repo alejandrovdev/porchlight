@@ -14,6 +14,9 @@ terminal tab shows.
                                  name, list the closed ones
     reopen_anywhere(configuration, text, mac)
                                  the same, among the closed sessions of every project
+    let_go(project, mac)         end the free session, as turning the feature off does
+    left_behind(name, mac)       a project the configuration no longer has, whose free
+                                 session `let_go` ends
 
 One free session always waits, in its own worktree, named `<prefix>-...` in the app. It
 waits hidden: it runs in a detached session of the tool's own tmux server, so no tab stays
@@ -48,7 +51,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .. import names, session_settings
+from .. import config, names, session_settings
 from ..atoms import processes, transcripts, worktrees
 
 STATE = "ready-sessions"
@@ -545,6 +548,27 @@ def let_go(project, mac):
     reconcile(dataclasses.replace(project, features=kept), mac)
     left = free(store) & before
     return len(before - left), len(left)
+
+
+def left_behind(name, mac):
+    """A project the configuration no longer has, as the tool's state still knows it: a
+    project without features, in the folder its free sessions were made in, which `let_go`
+    takes. None when the state holds no free session of it, or when their worktrees do not
+    name one folder that is still there: nothing can be tidied in a folder that is gone."""
+    known = config.Project(name, "", "", ())
+    sessions = load_state(mac.store(known, STATE)).get("sessions")
+    folders = set()
+    for session, record in (sessions if isinstance(sessions, dict) else {}).items():
+        if not isinstance(record, dict) or record.get("state") != "free":
+            continue
+        worktree = Path(str(record.get("worktree") or ""))
+        if worktree.name != names.worktree(known, session) or worktree.parent.parts[-2:] != worktrees.FOLDER:
+            return None  # not where this tool makes a worktree: it tells no folder
+        folders.add(worktree.parent.parent.parent)
+    if len(folders) != 1:
+        return None
+    (folder,) = folders
+    return config.Project(name, str(folder), "", ()) if folder.is_dir() else None
 
 
 def status(project, mac, out=print):

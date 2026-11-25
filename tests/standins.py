@@ -103,6 +103,8 @@ class Launchctl:
         self.lists = True  # whether it can say what is loaded
         self.refused = set()  # the labels it fails to load
         self.stuck = set()  # the labels it fails to unload
+        self.unlisted = set()  # the loaded labels its list leaves out, as from another session
+        self.untold = {}  # label: what `print` exits with instead of saying whether it is loaded
         self.on_unload = None  # what unloading an agent changes, such as the process list
 
     def __call__(self, words, **options):
@@ -111,10 +113,13 @@ class Launchctl:
         if verb == "list":
             if not self.lists:
                 return result(1, stderr="Could not contact launchd")
-            rows = "".join("-\t0\t%s\n" % label for label in sorted(self.loaded | self.others))
+            rows = "".join("-\t0\t%s\n" % label for label in sorted((self.loaded | self.others) - self.unlisted))
             return result(stdout="PID\tStatus\tLabel\n" + rows)
         if verb == "print":
-            return result(0 if words[2].split("/", 2)[2] in self.loaded else 113)
+            label = words[2].split("/", 2)[2]
+            if label in self.untold:
+                return result(self.untold[label], stderr="Could not contact launchd\n")
+            return result(0 if label in self.loaded else 113)
         if verb == "bootstrap":
             with open(words[3], "rb") as handle:
                 told = plistlib.load(handle)
@@ -183,7 +188,8 @@ class StandInMac(Mac):
             },
         )
         self.launchctl = Launchctl()
-        self.launchd = launchd.Launchd(run=self.launchctl, uid=lambda: 501)
+        self.uid = 501  # who runs the command; 0 is root
+        self.launchd = launchd.Launchd(run=self.launchctl, uid=lambda: self.uid)
         self.ps = ps  # the process list, or what returns it
         self.now = 1_000_000.0
         self.terminated = []

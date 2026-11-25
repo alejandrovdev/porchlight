@@ -13,14 +13,19 @@
 
 Every command reads the configuration file (`--config <file>`, else the default one) and
 exits with 0 when it did what was asked, 1 when it refused or something needs attention,
-2 when the command line is wrong. `run`, `start` and `stop` work with a file that does not
-parse: the service waits for it, and the other two only load and unload what is installed.
+2 when the command line is wrong, or when `PORCHLIGHT_LABEL` is no reverse domain name.
+`run`, `start`, `stop` and `uninstall` work with a file that does not parse: the service
+waits for it, `start` and `stop` only load and unload what is installed, and `uninstall`
+finds the agents by their labels. `apply` refuses a file named with `--config` that is not
+there; the default file absent means no project.
 This file only reads the command line and prints: what a command does is in the module it
 calls.
 """
 
 import argparse
+import os
 import sys
+from pathlib import Path
 
 from . import __version__, agents, config, doctor, names, passes, service
 from .atoms import logs, tools
@@ -73,12 +78,6 @@ def apply(chosen, configuration, mac, out):
     return agents.apply(configuration, mac, out, servers=chosen.servers)
 
 
-def uninstall(chosen, configuration, mac, out):
-    return agents.uninstall(
-        configuration, mac, out, servers=chosen.servers, purge=chosen.purge, config_file=chosen.config_file
-    )
-
-
 def serve_project(chosen, configuration, mac, out):
     project = project_named(configuration, chosen.project, out)
     if project is None:
@@ -99,6 +98,28 @@ def start(chosen, path, mac, out):
 
 def stop(chosen, path, mac, out):
     return agents.stop(mac or Mac(config_file=path), out, servers=chosen.servers)
+
+
+def uninstall(chosen, path, mac, out):
+    """Uninstall with the configuration, or without it when it cannot be read: the agents
+    are then found by their labels and the free sessions in the folders of the state."""
+    configuration = load(path, out)
+    readable = configuration is not None
+    if not readable:
+        out(
+            "The file could not be read: the agents are found by their labels, and the free sessions in the "
+            "folders of the state."
+        )
+        configuration = config.Config()
+    try:
+        if mac is None:
+            mac = Mac.of(configuration, config_file=path) if readable else Mac(config_file=path)
+        return agents.uninstall(
+            configuration, mac, out, servers=chosen.servers, purge=chosen.purge, config_file=path, readable=readable
+        )
+    except tools.ToolNotFound as error:
+        out("%s. See what is missing with: %s" % (error, names.command("doctor")))
+        return 1
 
 
 def run_service(chosen, path, mac, out):
@@ -147,7 +168,7 @@ def parser():
     viewing.add_argument("session", type=server_session, help="the session's id, cse_...")
     listing = command("resume-list", copies, "List the copies of the server's sessions that /resume shows.")
     listing.add_argument("action", nargs="?", choices=("sync",), help="bring the copies up to date first")
-    with_servers(
+    applying = with_servers(
         command(
             "apply",
             apply,
@@ -155,6 +176,8 @@ def parser():
         ),
         "also restart the running servers that changed and remove those no longer wanted; their sessions end",
     )
+    # A file named and not there is a mistake: it would remove every agent as if no project were configured.
+    applying.set_defaults(named_file_must_exist=True)
     command("start", start, "Load every installed agent that is not loaded.", configured=False)
     with_servers(
         command(
@@ -171,6 +194,7 @@ def parser():
             uninstall,
             "Remove the agents and end the free sessions. Sessions in use keep running; "
             "the configuration, the state and the logs stay.",
+            configured=False,
         ),
         "also remove the servers that run; the sessions they started end",
     )
@@ -190,6 +214,9 @@ def parser():
         names.SERVER_AGENT, serve_project, "Become a project's server: what its background agent runs."
     )
     serving.add_argument("project", help="the project's name in the configuration")
+    # apply, start, stop and uninstall refuse root themselves (`agents`); these delete files too.
+    for deleting in (running, serving):
+        deleting.set_defaults(not_as_root=True)
     return top
 
 
@@ -215,7 +242,19 @@ def main(arguments, mac=None, out=print):
         reading.print_usage(sys.stderr)
         sys.stderr.write("%s: error: name a command\n" % names.TOOL)
         return 2
-    path = getattr(chosen, "config", None) or config.default_path()
+    problem = names.label_problem(mac.environ if mac else os.environ)
+    if problem:  # every label, file and agent of the tool is named from it
+        reading.print_usage(sys.stderr)
+        sys.stderr.write("%s: error: %s\n" % (names.TOOL, problem))
+        return 2
+    if getattr(chosen, "not_as_root", False) and (mac.launchd.uid() if mac else os.getuid()) == 0:
+        out(agents.AS_ROOT)  # they tidy worktrees and settings files of the person's
+        return 1
+    named = getattr(chosen, "config", None)
+    if named and getattr(chosen, "named_file_must_exist", False) and not Path(named).exists():
+        out("The configuration file %s does not exist. Nothing was changed." % named)
+        return 1
+    path = named or config.default_path()
     if not chosen.configured:
         return chosen.run(chosen, path, mac, out)
     configuration = load(path, out)

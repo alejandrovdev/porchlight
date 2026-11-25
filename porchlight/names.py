@@ -21,6 +21,11 @@ LABEL = "io.github.alejandrovdev." + TOOL  # the address the tool is published a
 SERVER_AGENT = "server"  # what a label says between the tool's own and a project's name
 SHORT = 8  # how much of a session's id a name carries
 SERVER_SESSION = "cse_"  # how the id of a session the server starts begins
+MARKER = "." + TOOL  # the file in a folder the tool made: only there does a purge delete
+PROJECT_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+LABEL_SHAPE = re.compile(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+")  # a reverse domain name
+# The variables that name a folder or a file: what someone else is handed is made absolute.
+PLACES = ("state_dir", "log_dir", "transcripts_dir", "launch_agents_dir", "warp_tab_configs", "config")
 
 
 def command(*words):
@@ -141,11 +146,23 @@ def server_label(project_name, environ=None):
     return "%s.%s.%s" % (label_prefix(environ), SERVER_AGENT, project_name)
 
 
+def label_problem(environ=None):
+    """What is wrong with the start of the labels a variable chooses; empty when nothing is.
+    The labels name files in the agents' folder, so only a reverse domain name will do."""
+    chosen_label = chosen("label", environ)
+    if not chosen_label or LABEL_SHAPE.fullmatch(chosen_label):
+        return ""
+    return (
+        "%s must be a reverse domain name such as com.example.%s (letters, digits and hyphens, in parts "
+        "joined by dots), not %r" % (variable("label"), TOOL, chosen_label)
+    )
+
+
 def served(label, environ=None):
     """The project a label is the server of; None for any other label."""
     start = "%s.%s." % (label_prefix(environ), SERVER_AGENT)
     name = label[len(start) :] if label.startswith(start) else ""
-    return name if re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) else None
+    return name if PROJECT_NAME.fullmatch(name) else None
 
 
 def own_label(label, environ=None):
@@ -183,10 +200,16 @@ def carried(environ=None, config_file=None):
     """What a command the tool hands to someone else needs in its environment to read what
     this process reads: every variable of the tool, and the configuration file in use when
     it is not the default one. A tab, a session and a background agent start with none of
-    this process's environment."""
+    this process's environment. A folder or a file named from where this process runs is
+    handed as an absolute path: who receives it runs elsewhere."""
     environ = os.environ if environ is None else environ
     start = variable("")
-    found = {name: value for name, value in environ.items() if name.startswith(start) and value}
+    places = {variable(name) for name in PLACES}
+    found = {
+        name: os.path.abspath(value) if name in places else value
+        for name, value in environ.items()
+        if name.startswith(start) and value
+    }
     if config_file is not None:
         file = os.path.abspath(config_file)
         if Path(file) == default_config():

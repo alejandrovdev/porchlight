@@ -169,7 +169,7 @@ def text_value(key, table, name, problems, pattern=None, shape="", required=Fals
     if not isinstance(value, str):
         problems.append(("%s.%s" % (key, name), "must be text"))
         return None
-    if not value or (pattern and not pattern.match(value)):
+    if not value or (pattern and not pattern.fullmatch(value)):
         problems.append(("%s.%s" % (key, name), shape or "must not be empty"))
         return None
     return value
@@ -177,7 +177,7 @@ def text_value(key, table, name, problems, pattern=None, shape="", required=Fals
 
 def project_from(name, table, problems):
     key = "projects.%s" % name
-    if not PROJECT_NAME.match(name):
+    if not PROJECT_NAME.fullmatch(name):
         problems.append((key, "a project's name has lowercase letters, digits and hyphens, at most 32"))
         return None
     if not isinstance(table, dict):

@@ -1,6 +1,7 @@
 """Tests of launchd's agents: the definition of one, the folder that keeps them, and what
 is asked of launchctl. launchctl is a stand-in: nothing is loaded and nothing is unloaded."""
 
+import os
 import plistlib
 import tempfile
 import unittest
@@ -90,6 +91,17 @@ class Folder(unittest.TestCase):
 
         self.assertFalse(path.exists())
 
+    def test_a_file_is_written_for_its_owner_alone_to_change_whatever_the_umask(self):
+        for umask in (0o002, 0o000, 0o077):
+            before = os.umask(umask)
+            try:
+                path = launchd.file(self.folder, "umask.%o" % umask)
+                launchd.write(path, definition())
+            finally:
+                os.umask(before)
+
+            self.assertEqual(path.stat().st_mode & 0o777, 0o644, "launchd refuses a file others may write")
+
 
 class Launchctl(unittest.TestCase):
     def launchd(self, answers=None):
@@ -114,6 +126,16 @@ class Launchctl(unittest.TestCase):
         self.assertFalse(asked.is_loaded(LABEL))
         self.assertTrue(self.launchd().is_loaded(LABEL))
         self.assertEqual(self.runner.calls, [["/bin/launchctl", "print", "gui/501/" + LABEL]])
+
+    def test_a_label_is_gone_only_when_launchd_says_it_does_not_know_it(self):
+        answers = {0: launchd.LOADED, 113: launchd.GONE, 1: launchd.UNKNOWN, 112: launchd.UNKNOWN, 3: launchd.UNKNOWN}
+        for code, found in answers.items():
+            asked = self.launchd(lambda words: standins.result(returncode=code))
+
+            self.assertEqual(asked.state(LABEL), found, code)
+            self.assertEqual(self.runner.calls, [["/bin/launchctl", "print", "gui/501/" + LABEL]])
+
+        self.assertEqual(self.launchd(lambda words: OSError("no launchctl")).state(LABEL), launchd.UNKNOWN)
 
     def test_loads_a_definition_into_the_users_own_domain(self):
         self.launchd().load(Path("/agents/one.plist"))

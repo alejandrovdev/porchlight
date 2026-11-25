@@ -6,7 +6,8 @@
 The system tells the changes (kqueue), so a wait costs nothing while nothing happens. A file
 counts as changed when it is written, grows, is renamed or is removed; a folder when
 something appears in it or leaves it. What changes between two waits is told by the next
-one. A path that is not there is skipped: watch its folder to learn that it appeared.
+one. A path that is not there is skipped: watch its folder to learn that it appeared. So is
+whatever is neither a file nor a folder: opening a pipe would wait for its other end.
 
 A file replaced by another (written beside it and renamed over it) is told as a change of
 the one that was watched; `watch` then follows the new one.
@@ -17,8 +18,10 @@ it ends a wait, which answers False, and is read away.
 
 import os
 import select
+import stat
 
-OPEN_TO_WATCH = getattr(os, "O_EVTONLY", 0x8000)  # no reading: the file may still be removed or unmounted
+# No reading: the file may still be removed or unmounted. And no waiting to open it.
+OPEN_TO_WATCH = getattr(os, "O_EVTONLY", 0x8000) | os.O_NONBLOCK
 CHANGES = select.KQ_NOTE_WRITE | select.KQ_NOTE_EXTEND | select.KQ_NOTE_DELETE | select.KQ_NOTE_RENAME
 
 
@@ -40,6 +43,8 @@ class Watcher:
             try:
                 found = os.stat(path)
             except OSError:
+                continue
+            if not (stat.S_ISREG(found.st_mode) or stat.S_ISDIR(found.st_mode)):
                 continue
             known = self.open.get(path)
             if known is not None and known[1] == (found.st_dev, found.st_ino):

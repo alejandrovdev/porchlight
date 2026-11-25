@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import porchlight
-from porchlight import cli, config, names, service, session_settings
+from porchlight import agents, cli, config, names, service, session_settings
 from porchlight.atoms import state, transcripts
 from porchlight.features import ready_sessions, resume_list
 from tests import standins
@@ -109,7 +109,7 @@ class Basics(CommandLine):
         self.file.write_text('terminal = "kitty"\n[projects.shop]\npermission_mode = "plan"\npreset = "minimal"\n')
 
         every = (["status"], ["doctor"], ["reopen"], ["resume-list"], ["view", "shop", LIVE])
-        every += (["apply"], ["apply", "--servers"], ["uninstall"], ["server", "shop"])
+        every += (["apply"], ["apply", "--servers"], ["server", "shop"])  # `uninstall` works without it
         for command in every:
             self.printed.clear()
             self.assertEqual(self.run_cli(*command), 1, command)
@@ -527,6 +527,129 @@ class Agents(CommandLine):
         self.assertFalse(self.file.exists())
         self.assertFalse((self.root / "state").exists())
         self.assertEqual(self.printed[-1], "Removed the configuration, the state and the logs.")
+
+    def test_apply_refuses_a_configuration_file_that_was_named_and_is_not_there(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+        self.file.unlink()  # or a name typed wrong
+        files = sorted(path.name for path in (self.root / "agents").iterdir())
+        self.mac.launchctl.calls.clear()
+        self.printed.clear()
+
+        self.assertEqual(self.run_cli("apply", "--servers"), 1)
+
+        self.assertEqual(self.printed, ["The configuration file %s does not exist. Nothing was changed." % self.file])
+        self.assertEqual(self.mac.launchctl.calls, [], "launchd was not even asked")
+        self.assertEqual(sorted(path.name for path in (self.root / "agents").iterdir()), files)
+
+    def test_apply_without_the_default_file_still_means_no_project(self):
+        with mock.patch.dict("os.environ", {"PORCHLIGHT_CONFIG": str(self.file)}):
+            self.assertEqual(self.run_cli("apply", config_file=False), 0)
+
+        self.assertEqual(self.printed, ["No project is configured. Add one with: porchlight setup", CHECK])
+
+    def broken_after_a_free_session(self):
+        """An install whose configuration stopped parsing while a free session waits."""
+        (shop,) = self.configure(shop=("server", "ready-session"))
+        self.run_cli("apply")
+        worktree = names.repository(shop) / ".claude" / "worktrees" / names.worktree(shop, A)
+        worktree.mkdir(parents=True)
+        record = {"state": "free", "started": self.mac.now, "changed": self.mac.now, "worktree": str(worktree)}
+        record.update(branch=names.branch(shop, A), prompt="", title="", cse="", tidied=False, shown=False)
+        record["tmux"] = names.tmux_session(shop, A)
+        self.mac.store(shop, ready_sessions.STATE).save({"sessions": {A: record}})
+        self.mac.ps = f"601 claude --session-id {A} --remote-control\n"
+
+        def terminate(pid):
+            self.mac.terminated.append(pid)
+            self.mac.ps = ""
+
+        self.mac.terminate = terminate
+        self.mac.git_runner.answers = lambda words: standins.result(stdout="origin/main\n") if "symbolic-ref" in words else None
+        self.file.write_text('terminal = "kitty"\n')
+        self.printed.clear()
+        return shop
+
+    def test_uninstall_works_with_a_configuration_that_does_not_parse(self):
+        shop = self.broken_after_a_free_session()
+
+        self.assertEqual(self.run_cli("uninstall", "--servers"), 0)
+
+        self.assertEqual(self.mac.launchctl.loaded, set())
+        self.assertEqual(list((self.root / "agents").iterdir()), [])
+        self.assertEqual(self.mac.terminated, [601], "the free session of a folder of the state")
+        self.assertEqual(self.mac.store(shop, ready_sessions.STATE).load({})["sessions"], {})
+        self.assertEqual(
+            self.printed[:5],
+            [
+                "The configuration %s has problems:" % self.file,
+                'terminal: unknown terminal "kitty"; one of: warp',
+                "The file could not be read: the agents are found by their labels, and the free sessions in the "
+                "folders of the state.",
+                SERVICE_LABEL + ": unloaded and removed",
+                SHOP + ": unloaded and removed",
+            ],
+        )
+
+    def test_uninstall_purge_keeps_a_configuration_file_it_could_not_read(self):
+        self.broken_after_a_free_session()
+
+        self.assertEqual(self.run_cli("uninstall", "--servers", "--purge"), 1, "not everything asked for was removed")
+
+        self.assertEqual(self.file.read_text(), 'terminal = "kitty"\n', "it may be a file named by mistake")
+        self.assertFalse((self.root / "state").exists())
+        self.assertEqual(
+            self.printed[-2:],
+            ["The configuration file %s was kept: it could not be read." % self.file, "Removed the state and the logs."],
+        )
+
+    def test_a_label_that_is_no_reverse_domain_name_is_a_usage_error_before_anything_changes(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+        files = sorted(path.name for path in (self.root / "agents").iterdir())
+        self.mac.launchctl.calls.clear()
+        self.printed.clear()
+        self.mac.environ["PORCHLIGHT_LABEL"] = "../../escape"
+
+        every = (["status"], ["doctor"], ["apply", "--servers"], ["start"], ["stop", "--servers"])
+        every += (["uninstall", "--servers", "--purge"], ["run", "--once"])
+        for command in every:
+            self.assertEqual(self.run_cli(*command), 2, command)
+            self.assertIn("usage: porchlight", self.errors)
+            self.assertIn("PORCHLIGHT_LABEL must be a reverse domain name", self.errors)
+
+        self.assertEqual(self.printed, [])
+        self.assertEqual(self.mac.launchctl.calls, [])
+        self.assertEqual(sorted(path.name for path in (self.root / "agents").iterdir()), files)
+        self.assertTrue(self.file.exists())
+
+    def test_root_is_refused_by_the_commands_that_change_launchd_or_delete_files(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+        self.mac.launchctl.calls.clear()
+        self.mac.uid = 0
+
+        for command in (["apply", "--servers"], ["start"], ["stop", "--servers"], ["uninstall", "--servers", "--purge"]):
+            self.printed.clear()
+            self.assertEqual(self.run_cli(*command), 1, command)
+            self.assertEqual(len(self.printed), 1)
+            self.assertIn("without sudo", self.printed[0])
+
+        self.assertEqual(self.mac.launchctl.calls, [])
+        self.assertTrue(self.file.exists())
+
+    def test_root_is_refused_by_the_service_and_the_server_which_tidy_the_persons_files(self):
+        self.configure(shop=("server",))
+        self.mac.uid = 0
+
+        with mock.patch.object(cli.service, "run") as service, mock.patch.object(cli.project_server, "run") as server:
+            for command in (["run", "--once"], ["server", "shop"]):
+                self.printed.clear()
+                self.assertEqual(self.run_cli(*command), 1, command)
+                self.assertEqual(self.printed, [agents.AS_ROOT])
+
+        service.assert_not_called()
+        server.assert_not_called()
 
 
 class OneConfigurationFile(CommandLine):

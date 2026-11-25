@@ -45,6 +45,7 @@ def run(project, mac, execute=None, chdir=None):
     """Start the server in the project's folder; this process becomes the server."""
     claude = mac.claude
     settings = mac.settings(project)
+    mac.make_state_root()  # the server may be the first to write in it
     session_settings.stage(project, settings)
     session_settings.install_pending(settings)  # no server runs yet: what waited goes in now
     (chdir or os.chdir)(names.repository(project))

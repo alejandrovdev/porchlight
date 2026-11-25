@@ -12,15 +12,21 @@ an agent of its own (`porchlight server <project>`).
 
 A server that runs is never stopped, restarted or removed unless asked with `servers`: the
 app cannot start again the sessions that would end with it. Whatever else changes around
-it, it is left as it is and said.
+it, it is left as it is and said. A folder is served by one server: none is loaded into a
+folder that a server left running serves.
 
-An agent is this install's when its label is the service's or a server's (`names`), never
-because it merely starts the same way: nothing else in the folder is read, loaded or
-removed.
+An agent is this install's when its label is the service's or a server's (`names`) and its
+file is one the tool writes: it runs the tool, with `run` or `server <project>`. A file under
+one of those labels that runs anything else is never read further, loaded or removed, and a
+loaded label without a file is known by its name. Nothing else in the folder is touched.
+
+launchd's list may be another session's, so an agent counts as loaded when the list has it
+or launchd, asked about its label, says it has it; and as gone only when launchd says it
+does not know it. When launchd cannot say, nothing is changed. None of this runs as root,
+whose agents are not the person's.
 """
 
 import os
-import re
 import subprocess
 from collections import namedtuple
 from dataclasses import dataclass
@@ -34,16 +40,20 @@ from .features import live_view, ready_sessions, resume_list, view_tabs
 
 SERVICE, SERVER = "service", "server"
 LOAD, KEEP, RESTART, LEAVE, REMOVE = "load", "keep", "restart", "leave", "remove"
+FOREIGN = "foreign"  # a file under one of the tool's labels that the tool did not write
 CHANGED, UNWANTED = "changed", "unwanted"  # why a server was left as it is
 
 TOOLS = ("claude", "git", "tmux")  # what the agents start, whose folders their PATH has
 SERVER_THROTTLE = 30  # the seconds between two starts of a server that keeps ending
 UNLOAD_PATIENCE = 10  # the seconds an agent is given to be gone once asked
 STATE_KINDS = (ready_sessions.STATE, view_tabs.STATE, resume_list.STATE)
-PROJECT_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+UNWRITABLE = (OSError, ValueError, TypeError, OverflowError)  # what writing a definition raises
 Named = namedtuple("Named", "name")  # a project of which only the name is known
 
 WHY_SERVERS_STAY = "because the app cannot start its sessions again."
+AS_ROOT = "Run this as the person who is logged in, without sudo: root has other agents. Nothing was changed."
+NOT_UNLOADED = "could not be unloaded, so it was left as it is"
+NOT_TOLD = "launchd could not say whether it was unloaded, so it was left as it is"
 
 
 @dataclass(frozen=True)
@@ -75,7 +85,8 @@ def search_path(mac):
 
 
 def wanted(configuration, mac):
-    """The agents a configuration asks for: the service first, then each server."""
+    """The agents a configuration asks for: the service first, then each server. Every path
+    is absolute: launchd starts them from no folder of this process's."""
     if not configuration.projects:
         return []
     environ = mac.environ
@@ -85,7 +96,7 @@ def wanted(configuration, mac):
         names.service_label(environ),
         words + ["run"],
         environment,
-        names.service_log(environ),
+        os.path.abspath(names.service_log(environ)),
         outlived=True,  # the sessions and the tabs it started survive its restart
     )
     found = [Agent(service["Label"], SERVICE, service)]
@@ -95,7 +106,7 @@ def wanted(configuration, mac):
                 names.server_label(project.name, environ),
                 words + [names.SERVER_AGENT, project.name],
                 environment,
-                names.server_log(project, environ),
+                os.path.abspath(names.server_log(project, environ)),
                 directory=names.repository(project),
                 throttle=SERVER_THROTTLE,
             )
@@ -134,25 +145,86 @@ def decide(agents, found, loaded, servers=False):
     return actions
 
 
-def installed(mac, loaded=()):
-    """The agents of this install that have a file or are loaded, as not wanted: the
-    service first, then the servers by project."""
+def refused(mac, out):
+    """Whether this command may change launchd or delete files here: 0 when it may; 2, and
+    said, for labels that are no reverse domain name; 1, and said, for root."""
+    problem = names.label_problem(mac.environ)
+    if problem:
+        out(problem + ". Nothing was changed.")
+        return 2
+    if mac.launchd.uid() == 0:
+        out(AS_ROOT)
+        return 1
+    return 0
+
+
+def runs_the_tool(label, told, environ=None):
+    """Whether a definition is one this tool writes for one of its labels: its arguments
+    end with `run` for the service and with `server <project>` for that project's server,
+    and name the tool before that."""
+    words = told.get("ProgramArguments") if isinstance(told, dict) else None
+    if not isinstance(words, list) or not all(isinstance(word, str) for word in words):
+        return False
+    project = names.served(label, environ)
+    ending = [names.SERVER_AGENT, project] if project else ["run"]
+    if len(words) <= len(ending) or words[-len(ending) :] != ending:
+        return False
+    return any(os.path.basename(word) == names.TOOL for word in words[: -len(ending)])
+
+
+def own_files(mac):
+    """The files in the agents' folder under this install's labels: (the definitions of
+    those the tool wrote, by label; the labels of those it did not write)."""
+    mine, foreign = {}, set()
+    for label in launchd.labels(mac.launch_agents):
+        if names.own_label(label, mac.environ):
+            told = launchd.read(launchd.file(mac.launch_agents, label))
+            if runs_the_tool(label, told, mac.environ):
+                mine[label] = told
+            else:
+                foreign.add(label)
+    return mine, foreign
+
+
+def installed(mac, loaded=(), files=None):
+    """The agents of this install that have a file the tool wrote, or that are loaded under
+    one of its labels and have no file, as not wanted: the service first, then the servers
+    by project. `files` is what `own_files` found; else it is looked for."""
     environ = mac.environ
-    labels = set(launchd.labels(mac.launch_agents)) | set(loaded)
+    mine, foreign = own_files(mac) if files is None else files
+    labels = set(mine) | {label for label in loaded if names.own_label(label, environ) and label not in foreign}
     found = []
-    for label in sorted(label for label in labels if names.own_label(label, environ)):
+    for label in sorted(labels):
         project = names.served(label, environ)
         found.append(Agent(label, SERVER if project else SERVICE, None, project))
     return sorted(found, key=lambda agent: agent.kind == SERVER)
 
 
-def what_is_loaded(mac, out):
-    """The labels launchd has loaded; None, and said, when it cannot tell."""
+def what_is_loaded(mac, out, mine=None):
+    """The labels launchd has loaded: those its list has, and each of this install's with a
+    file of the tool's that launchd, asked by its label, says it has. None, and said, when
+    launchd cannot tell, of all of them or of one the list leaves out."""
     try:
-        return mac.launchd.loaded()
+        listed = mac.launchd.loaded()
     except launchd.Unavailable as error:
         out("launchd could not say what is loaded (%s). Nothing was changed." % error)
         return None
+    if mine is None:
+        mine, _ = own_files(mac)
+    loaded, untold = set(listed), []
+    for label in sorted(mine):
+        said = mac.launchd.state(label)
+        if said == launchd.LOADED:
+            loaded.add(label)
+        elif said == launchd.UNKNOWN and label not in listed:
+            untold.append(label)
+    if untold:
+        out(
+            "launchd could not say whether %s %s loaded. Nothing was changed."
+            % (", ".join(untold), "is" if len(untold) == 1 else "are")
+        )
+        return None
+    return loaded
 
 
 def failure(answer):
@@ -166,8 +238,8 @@ def load(agent, mac):
     try:
         if agent.definition is not None and launchd.read(path) != agent.definition:
             launchd.write(path, agent.definition)
-        names.log_root(mac.environ).mkdir(parents=True, exist_ok=True)  # launchd makes no folder for a log
-    except OSError as error:
+        mac.make_log_root()  # launchd makes no folder for a log
+    except UNWRITABLE as error:
         return "could not be written: %s" % error
     answer = mac.launchd.load(path)
     if answer.returncode != 0:
@@ -177,18 +249,29 @@ def load(agent, mac):
 
 
 def unload(label, mac):
-    """Stop an agent and wait until launchd let go of it; whether it did."""
+    """Stop an agent and wait until launchd says it does not know it any more: nothing when
+    it does, else what to say about the agent, which was left as it is."""
     mac.launchd.unload(label)
-    return bool(mac.wait_for(lambda: not mac.launchd.is_loaded(label), UNLOAD_PATIENCE))
+    said = []
 
+    def gone():
+        said.append(mac.launchd.state(label))
+        return said[-1] == launchd.GONE
 
-NOT_UNLOADED = "could not be unloaded, so it was left as it is"
+    if mac.wait_for(gone, UNLOAD_PATIENCE):
+        return ""
+    return NOT_TOLD if said and said[-1] == launchd.UNKNOWN else NOT_UNLOADED
 
 
 def perform(action, loaded, mac):
     """Do one action: (what to say about the agent, whether it went well)."""
     agent = action.agent
     path = launchd.file(mac.launch_agents, agent.label)
+    if action.verb == FOREIGN:
+        return "left as it is: the file %s was not written by %s. Move it away, and run this again." % (
+            path,
+            names.TOOL,
+        ), False
     if action.verb == KEEP:
         return "already loaded, nothing changed", True
     if action.verb == LEAVE:
@@ -199,38 +282,93 @@ def perform(action, loaded, mac):
         problem = load(agent, mac)
         return problem or "loaded", not problem
     if action.verb == RESTART:
-        if not unload(agent.label, mac):
-            return NOT_UNLOADED, False
-        problem = load(agent, mac)
+        problem = unload(agent.label, mac) or load(agent, mac)
         return problem or "restarted with its new definition", not problem
     was_loaded = agent.label in loaded
-    if was_loaded and not unload(agent.label, mac):
-        return NOT_UNLOADED, False
+    if was_loaded:
+        problem = unload(agent.label, mac)
+        if problem:
+            return problem, False
     launchd.remove(path)
     return ("unloaded and removed" if was_loaded else "removed"), True
 
 
+def folder_of(told):
+    """The folder a server's definition runs in; None when it says none."""
+    directory = told.get("WorkingDirectory") if isinstance(told, dict) else None
+    return directory if isinstance(directory, str) and directory else None
+
+
+def holders(action, actions, found, loaded):
+    """The actions of the other servers launchd has loaded that may serve the folder a
+    server would be loaded into: (the action, the folder its file says it runs in, or None
+    when no file says)."""
+    folder = folder_of(action.agent.definition)
+    for other in actions:
+        if other is action or other.agent.kind != SERVER or other.agent.label not in loaded:
+            continue
+        theirs = folder_of(found.get(other.agent.label))
+        if theirs is None or folder is None or os.path.realpath(theirs) == os.path.realpath(folder):
+            yield other, theirs
+
+
+def held(action, actions, found, loaded, done, mac, out, servers):
+    """Why a server may not be loaded into its folder, or nothing. A server that runs in
+    that folder and is to be removed is removed first; one that is left running, or that
+    did not unload, holds the folder."""
+    for other, theirs in holders(action, actions, found, loaded):
+        label = other.agent.label
+        if other.verb == REMOVE and label not in done:
+            said, done[label] = perform(other, loaded, mac)
+            out("%s: %s" % (label, said))
+        if other.verb == REMOVE and done[label]:
+            continue  # gone: it serves nothing
+        refused_as = "not loaded" if action.verb == LOAD else "not restarted"
+        if other.verb == LEAVE and not servers:
+            hint = "; %s replaces it" % names.command("apply", "--servers")
+            if theirs is None:
+                return "%s: %s is left running and its folder is not known%s" % (refused_as, label, hint)
+            return "%s: %s is left running in the same folder, %s%s" % (refused_as, label, theirs, hint)
+        if theirs is None:
+            return "%s: %s still runs and its folder is not known" % (refused_as, label)
+        return "%s: %s still runs in the same folder, %s" % (refused_as, label, theirs)
+    return ""
+
+
 def apply(configuration, mac, out=print, servers=False):
-    """Make launchd match the configuration, one line per agent. 0 unless something failed."""
-    loaded = what_is_loaded(mac, out)
+    """Make launchd match the configuration, one line per agent. 0 unless something failed
+    or was refused."""
+    code = refused(mac, out)
+    if code:
+        return code
+    mine, foreign = own_files(mac)
+    loaded = what_is_loaded(mac, out, mine)
     if loaded is None:
         return 1
     asked = wanted(configuration, mac)
     labels = {agent.label for agent in asked}
-    others = [agent for agent in installed(mac, loaded) if agent.label not in labels]
-    files = set(launchd.labels(mac.launch_agents))
-    found = {
-        agent.label: launchd.read(launchd.file(mac.launch_agents, agent.label))
-        for agent in asked + others
-        if agent.label in files
-    }
-    code = 0
+    others = [agent for agent in installed(mac, loaded, (mine, foreign)) if agent.label not in labels]
+    actions = []
+    for agent in asked + others:
+        if agent.label in foreign:
+            actions.append(Action(agent, FOREIGN))
+        else:
+            actions += decide([agent], mine, loaded, servers)
+    done = {}  # the label of each agent acted on: whether that went well
     left = []
-    actions = decide(asked + others, found, loaded, servers)
     for action in actions:
-        said, well = perform(action, loaded, mac)
-        out("%s: %s" % (action.agent.label, said))
-        code = code if well else 1
+        label = action.agent.label
+        if label in done:
+            continue  # removed early, to free its folder
+        if action.verb in (LOAD, RESTART) and action.agent.kind == SERVER:
+            problem = held(action, actions, mine, loaded, done, mac, out, servers)
+            if problem:
+                out("%s: %s" % (label, problem))
+                code = 1
+                continue
+        said, done[label] = perform(action, loaded, mac)
+        out("%s: %s" % (label, said))
+        code = code if done[label] else 1
         if action.verb == LEAVE:
             left.append(action.agent.project)
     still_served = {agent.project for agent in asked + others if agent.kind == SERVER and agent.label in loaded}
@@ -257,15 +395,17 @@ def apply(configuration, mac, out=print, servers=False):
 
 def start(mac, out=print):
     """Load every agent of this install that has a file and is not loaded."""
-    loaded = what_is_loaded(mac, out)
+    code = refused(mac, out)
+    if code:
+        return code
+    files = own_files(mac)
+    loaded = what_is_loaded(mac, out, files[0])
     if loaded is None:
         return 1
-    files = set(launchd.labels(mac.launch_agents))
-    agents = [agent for agent in installed(mac) if agent.label in files]
+    agents = installed(mac, (), files)
     if not agents:
         out("No agent is installed. Install them with: %s" % names.command("apply"))
         return 1
-    code = 0
     for agent in agents:
         if agent.label in loaded:
             out("%s: already loaded" % agent.label)
@@ -279,24 +419,28 @@ def start(mac, out=print):
 def stop(mac, out=print, servers=False):
     """Unload the service, and the servers only when asked. The files stay, so `start`
     and the next login load them again; the sessions that run keep running."""
-    loaded = what_is_loaded(mac, out)
+    code = refused(mac, out)
+    if code:
+        return code
+    files = own_files(mac)
+    loaded = what_is_loaded(mac, out, files[0])
     if loaded is None:
         return 1
-    code = 0
-    running = [agent for agent in installed(mac, loaded) if agent.label in loaded]
+    running = [agent for agent in installed(mac, loaded, files) if agent.label in loaded]
     service = names.service_label(mac.environ)
-    if service not in loaded:
+    if service not in {agent.label for agent in running}:
         out("%s: not loaded" % service)
     ended = False
     for agent in running:
         if agent.kind == SERVER and not servers:
             continue
-        if unload(agent.label, mac):
+        problem = unload(agent.label, mac)
+        if problem:
+            out("%s: %s" % (agent.label, problem))
+            code = 1
+        else:
             out("%s: unloaded" % agent.label)
             ended = ended or agent.kind == SERVER
-        else:
-            out("%s: %s" % (agent.label, NOT_UNLOADED))
-            code = 1
     kept = [agent.project for agent in running if agent.kind == SERVER and not servers]
     if kept:
         out("The servers keep running (%s); %s unloads them too." % (", ".join(kept), names.command("stop", "--servers")))
@@ -308,22 +452,13 @@ def stop(mac, out=print, servers=False):
     return code
 
 
-def state_folders(mac):
-    """The name of every project that has a folder in the tool's state."""
-    try:
-        entries = sorted((names.state_root(mac.environ) / "projects").iterdir())
-    except OSError:
-        return []
-    return [entry.name for entry in entries if entry.is_dir() and PROJECT_NAME.fullmatch(entry.name)]
-
-
 def still_running(mac):
     """The sessions in the tool's state whose process runs, of whatever project, configured
     or not: (how many are in use, how many wait for a first prompt)."""
     ps_text = mac.processes()
     ready, served = ready_sessions.running(ps_text), live_view.server_processes(ps_text)
     used = waiting = 0
-    for name in state_folders(mac):
+    for name in mac.recorded_projects():
         project = Named(name)
         sessions = mac.store(project, ready_sessions.STATE).load({}).get("sessions")
         for session, record in (sessions if isinstance(sessions, dict) else {}).items():
@@ -340,22 +475,36 @@ def counted(number, one, many):
     return "%d %s" % (number, one if number == 1 else many)
 
 
+def spoken(things):
+    """Things in a sentence: "a", "a and b", "a, b and c"."""
+    return things[0] if len(things) == 1 else "%s and %s" % (", ".join(things[:-1]), things[-1])
+
+
 def let_go_of_sessions(configuration, mac, out):
-    """End the free session of every project; whether all went well."""
+    """End the free session of every project of the configuration, and of every project
+    the tool's state still holds that the configuration no longer has, as a feature turned
+    off ends it; whether all went well."""
     well = True
-    for project in configuration.projects:
-        if not names.repository(project).is_dir():
-            continue  # nothing can be tidied in a folder that is gone
+    configured = {project.name for project in configuration.projects}
+    removed = [name for name in mac.recorded_projects() if name not in configured]
+    for project in list(configuration.projects) + removed:
+        name = getattr(project, "name", project)
         try:
+            if isinstance(project, str):
+                project = ready_sessions.left_behind(project, mac)
+                if project is None:
+                    continue  # no free session, or none whose folder is still there
+            if not names.repository(project).is_dir():
+                continue  # nothing can be tidied in a folder that is gone
             ended, left = ready_sessions.let_go(project, mac)
         except Exception as error:  # one project never stops the others
-            out("%s: its free session could not be ended: %r" % (project.name, error))
+            out("%s: its free session could not be ended: %r" % (name, error))
             well = False
             continue
         if ended:
-            out("%s: ended %s it held" % (project.name, "the free session" if ended == 1 else "the %d free sessions" % ended))
+            out("%s: ended %s it held" % (name, "the free session" if ended == 1 else "the %d free sessions" % ended))
         if left:
-            out("%s: the free session it holds did not end" % project.name)
+            out("%s: the free session it holds did not end" % name)
             well = False
     return well
 
@@ -375,43 +524,78 @@ def empty(folder):
         pass
 
 
-def erase(configuration, mac, config_file=None):
-    """Remove the configuration, the state and the logs: the files this tool makes, one by
-    one, and each folder only once it is empty. Never a whole folder: a variable may have
-    pointed it at one that holds something else. The configuration file is the one given
-    by whoever read it, and none is looked for when none is given."""
+def made_here(root, out):
+    """Whether a purge may delete in one of the tool's folders: it is not there, or the
+    tool made it and marked it. Said when not."""
+    if not Path(root).exists() or state.claimed(root, names.MARKER):
+        return True
+    out("%s was left as it is: %s did not make that folder." % (root, names.TOOL))
+    return False
+
+
+def erase(configuration, mac, out, config_file=None, readable=True):
+    """Remove the configuration, the state and the logs, and say what was removed; whether
+    all of it was. Only the files this tool makes, one by one, and each folder only once it
+    is empty; and only in a state or log folder the tool made: a variable may have pointed
+    it at one that holds something else, which is left whole. The configuration file is the
+    one given by whoever read it, none is looked for when none is given, and one that could
+    not be read is kept: it may be a file named by mistake."""
     environ = mac.environ
-    if config_file is not None:
-        forget(config_file)
-    for name in sorted({project.name for project in configuration.projects} | set(state_folders(mac))):
-        project = Named(name)
-        for kind in STATE_KINDS:
-            store = Store(names.state_file(project, kind, environ))
-            for file in (store.path, store.lock_path, store.path.with_suffix(".writing")):
+    removed, well = [], True
+    if readable:
+        if config_file is not None:
+            forget(config_file)
+        removed.append("the configuration")
+    elif config_file is not None and Path(config_file).exists():
+        out("The configuration file %s was kept: it could not be read." % config_file)
+        well = False
+    known = {project.name for project in configuration.projects} | set(mac.recorded_projects())
+    projects = [Named(name) for name in sorted(known)]
+    if made_here(names.state_root(environ), out):
+        for project in projects:
+            for kind in STATE_KINDS:
+                store = Store(names.state_file(project, kind, environ))
+                for file in (store.path, store.lock_path, store.path.with_suffix(".writing")):
+                    forget(file)
+            settings = names.settings_file(project, environ)
+            for file in (settings, session_settings.waiting(settings), Path(str(settings) + ".writing")):
                 forget(file)
-        settings = names.settings_file(project, environ)
-        for file in (settings, session_settings.waiting(settings), Path(str(settings) + ".writing")):
-            forget(file)
-        empty(names.project_state(project, environ))
-        forget(names.log_file(project, environ))
-        forget(names.server_log(project, environ))
-    empty(names.state_root(environ) / "projects")
-    forget(names.service_lock(environ))
-    empty(names.state_root(environ))
-    forget(names.service_log(environ))
-    empty(names.log_root(environ))
+            empty(names.project_state(project, environ))
+        empty(names.state_root(environ) / "projects")
+        forget(names.service_lock(environ))
+        state.release(names.state_root(environ), names.MARKER)
+        removed.append("the state")
+    else:
+        well = False
+    if made_here(names.log_root(environ), out):
+        for project in projects:
+            forget(names.log_file(project, environ))
+            forget(names.server_log(project, environ))
+        forget(names.service_log(environ))
+        state.release(names.log_root(environ), names.MARKER)
+        removed.append("the logs")
+    else:
+        well = False
+    out("Removed %s." % spoken(removed) if removed else "Nothing was removed.")
+    return well
 
 
-def uninstall(configuration, mac, out=print, servers=False, purge=False, config_file=None):
-    """Unload and remove the agents, end the free sessions, and with `purge` remove
-    the configuration (`config_file`, else the file the Mac was given), the state and the
-    logs. 0 when nothing of the tool is left running except sessions in use."""
-    loaded = what_is_loaded(mac, out)
+def uninstall(configuration, mac, out=print, servers=False, purge=False, config_file=None, readable=True):
+    """Unload and remove the agents, end the free sessions of every project the tool's state
+    holds, configured or not, and with `purge` remove the configuration (`config_file`, else
+    the file the Mac was given), the state and the logs. `readable` is whether the
+    configuration could be read: when not, `configuration` has no project, the agents are
+    found by their labels and the configuration file is kept. 0 when nothing of the tool is
+    left running except sessions in use."""
+    code = refused(mac, out)
+    if code:
+        return code
+    files = own_files(mac)
+    loaded = what_is_loaded(mac, out, files[0])
     if loaded is None:
         return 1
-    code = 0
     kept = []
-    agents = installed(mac, loaded)
+    agents = installed(mac, loaded, files)
     for agent in agents:
         is_loaded = agent.label in loaded
         if agent.kind == SERVER and is_loaded and not servers:
@@ -427,6 +611,7 @@ def uninstall(configuration, mac, out=print, servers=False, purge=False, config_
         out("Nothing else was done: run this again once every agent is unloaded.")
         return 1
     # Hold what a service holds: none may run, or it would prepare the sessions let go of here.
+    mac.make_state_root()
     lock = mac.wait_for(lambda: state.exclusive(names.service_lock(mac.environ)), 5)
     if not lock:
         out("A %s that launchd did not start is still running: end it, and run this again." % names.command("run"))
@@ -441,7 +626,13 @@ def uninstall(configuration, mac, out=print, servers=False, purge=False, config_
             return 1
     if used:
         out("%s in use %s running." % (counted(used, "session", "sessions"), "keeps" if used == 1 else "keep"))
-    else:
+    if waiting:
+        out(
+            "%s could not be ended and still %s."
+            % (counted(waiting, "free session", "free sessions"), "runs" if waiting == 1 else "run")
+        )
+        code = 1
+    if not used and not waiting:
         out("No session is running.")
     if kept:
         out(
@@ -461,7 +652,6 @@ def uninstall(configuration, mac, out=print, servers=False, purge=False, config_
             % (counted(running, "session", "sessions"), "runs" if running == 1 else "run")
         )
         code = 1
-    else:
-        erase(configuration, mac, config_file or mac.config_file)
-        out("Removed the configuration, the state and the logs.")
+    elif not erase(configuration, mac, out, config_file or mac.config_file, readable):
+        code = 1
     return code

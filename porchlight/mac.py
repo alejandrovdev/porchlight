@@ -13,7 +13,7 @@ from functools import cached_property
 from pathlib import Path
 
 from . import names
-from .atoms import invocation, launchd, logs, processes, terminal, tmux, tools, transcripts, worktrees
+from .atoms import invocation, launchd, logs, processes, state, terminal, tmux, tools, transcripts, worktrees
 from .atoms.state import Store
 
 
@@ -117,11 +117,32 @@ class Mac:
             self.sleep(0.5)
         return 0
 
+    def make_state_root(self):
+        """The tool's state folder, made and marked as the tool's when it is not there: a
+        purge deletes only in a folder the tool made."""
+        return state.claim(names.state_root(self.environ), names.MARKER)
+
+    def make_log_root(self):
+        """The tool's log folder, made and marked as the tool's when it is not there."""
+        return state.claim(names.log_root(self.environ), names.MARKER)
+
+    def recorded_projects(self):
+        """The name of every project that has a folder in the tool's state, configured or not."""
+        try:
+            entries = sorted((names.state_root(self.environ) / "projects").iterdir())
+        except OSError:
+            return []
+        return [entry.name for entry in entries if entry.is_dir() and names.PROJECT_NAME.fullmatch(entry.name)]
+
     def store(self, project, kind):
-        return Store(names.state_file(project, kind, self.environ))
+        return Store(names.state_file(project, kind, self.environ), prepare=self.make_state_root)
 
     def settings(self, project):
         return names.settings_file(project, self.environ)
 
     def log(self, project, message):
+        try:
+            self.make_log_root()
+        except OSError:
+            pass  # writing a log never fails its caller
         logs.write(names.log_file(project, self.environ), message)

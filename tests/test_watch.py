@@ -2,6 +2,7 @@
 folder: the wait is the system's own, and no test waits longer than a moment."""
 
 import os
+import signal
 import tempfile
 import time
 import unittest
@@ -80,6 +81,25 @@ class Watching(unittest.TestCase):
         self.append(later)
 
         self.assertEqual(self.watcher.watched(), sorted([str(later), str(self.file)]))
+        self.assertTrue(self.watcher.wait(SOON))
+
+    def test_what_is_neither_a_file_nor_a_folder_is_not_watched(self):
+        pipe = self.root / "pipe"
+        os.mkfifo(pipe)
+
+        def too_long(number, frame):
+            raise AssertionError("watching a pipe nobody writes to never returned")
+
+        before = signal.signal(signal.SIGALRM, too_long)  # opening such a pipe waits for its other end
+        signal.alarm(5)
+        try:
+            self.watcher.watch([pipe, "/dev/null", self.file])
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, before)
+
+        self.assertEqual(self.watcher.watched(), [str(self.file)])
+        self.append(self.file)
         self.assertTrue(self.watcher.wait(SOON))
 
     def test_what_is_no_longer_asked_for_is_let_go(self):
