@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from porchlight import agents, config, doctor
-from porchlight.atoms import launchd
+from porchlight.atoms import launchd, processes
 from tests import standins
 
 # As Claude Code prints it: the choices run over several lines, and another option's
@@ -326,6 +326,30 @@ class SignIn(Scratch):
             self.section("This Mac")[0], "  problem  Claude Code sign-in: no one is signed in: run `claude auth login`"
         )
         self.assertTrue(all(line.startswith("  ok ") for line in self.section("shop")), "only the sign-in failed")
+
+    def test_signed_out_with_account_fields_and_exit_one_is_a_problem_that_prints_no_account_detail(self):
+        answer = json.dumps(dict(ACCOUNT, loggedIn=False, authMethod="none"))
+        ran = []
+
+        def run(words, **options):
+            ran.append(list(words))
+            return standins.result(1, stdout=answer)
+
+        asked = self.mac.output
+        self.mac.output = lambda words, any_exit=False: (
+            processes.output(words, run=run, any_exit=any_exit) if list(words) == SIGN_IN else asked(words, any_exit)
+        )
+        shop = self.project()
+        self.install(shop)
+
+        self.assertEqual(self.report(shop), 1)
+
+        self.assertEqual(ran, [SIGN_IN])
+        self.assertEqual(
+            self.section("This Mac")[0], "  problem  Claude Code sign-in: no one is signed in: run `claude auth login`"
+        )
+        for detail in ACCOUNT.values():
+            self.assertFalse([line for line in self.printed if detail in line], detail)
 
     def test_without_claude_the_tool_check_says_so_and_the_sign_in_is_not_asked(self):
         del self.mac.found["claude"]
