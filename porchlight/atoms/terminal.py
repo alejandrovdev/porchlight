@@ -131,8 +131,11 @@ class AppleTerminal(Terminal):
 
     def open_tab(self, name, title, directory, command, started, attempts=1, patience=25.0):
         shell = "cd -- %s && %s" % (shlex.quote(str(directory)), command)
-        # `--` ends osascript's options: a value that starts with "-" stays an argument.
-        words = ["/usr/bin/osascript", "-e", self.SCRIPT, "--", shell, title]
+        if "\0" in shell:
+            raise OSError("Terminal opened no window: the folder or the command holds a NUL byte")
+        # `--` ends osascript's options: a value that starts with "-" stays an argument. A NUL
+        # cannot be part of an argument, and a title loses nothing without it.
+        words = ["/usr/bin/osascript", "-e", self.SCRIPT, "--", shell, title.replace("\0", "")]
         for _ in range(attempts):
             done = self.run(words, capture_output=True, text=True, timeout=15)
             if done.returncode != 0:

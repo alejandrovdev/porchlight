@@ -349,6 +349,54 @@ class AppleTerminal(unittest.TestCase):
         self.assertNotIn("touch", terminal.AppleTerminal.SCRIPT)
         self.assertEqual(len(words), 6)
 
+    def test_a_folder_of_any_name_is_one_word_of_the_shell_line_that_runs_in_it(self):
+        marker = Path(self.scratch.name) / "marker"
+        names = ["it's", "$(touch %s)" % marker, "`touch %s`" % marker, "a; touch %s" % marker, "-n", "two\nlines",
+                 "!!", "*", "~", "' ; touch %s ; '" % marker]
+        for name in names:
+            with self.subTest(folder=name):
+                folder = Path(self.scratch.name) / "projects" / name
+                folder.mkdir(parents=True)
+                runner = standins.Runner()
+
+                self.apple(runner).open_tab("porchlight_ready_shop-aaaaaaaa", "t", folder, "exec /bin/pwd", lambda: 1)
+
+                shell_line = runner.calls[0][4]
+                ran = subprocess.run(["/bin/sh", "-c", shell_line], cwd=self.scratch.name, capture_output=True, text=True, timeout=10)
+                self.assertEqual((ran.returncode, ran.stdout), (0, str(folder) + "\n"), ran.stderr)
+                self.assertFalse(marker.exists(), "nothing in the folder's name ran")
+
+    def test_a_title_of_any_text_stays_after_the_script_and_the_end_of_options(self):
+        for title in ("-e", "--", "-l JavaScript", '" & do shell script "id" & "', "a\nb", "end run", "$(id)"):
+            with self.subTest(title=title):
+                runner = standins.Runner()
+
+                self.apple(runner).open_tab("porchlight_view_shop-01AAA", title, "/srv", "exec x", lambda: 1)
+
+                words = runner.calls[0]
+                self.assertEqual(words[2], terminal.AppleTerminal.SCRIPT)
+                self.assertEqual(words[3], "--")
+                self.assertEqual(words[5], title)
+
+    def test_a_nul_in_the_title_is_dropped_and_the_window_opens(self):
+        runner = standins.Runner(lambda words: ValueError("embedded null byte") if any("\0" in w for w in words) else None)
+
+        found = self.apple(runner).open_tab("porchlight_view_shop-01AAA", "shop\0 · Fix\0", "/srv", "exec x", lambda: 7)
+
+        self.assertEqual(found, 7)
+        self.assertEqual(runner.calls[0][5], "shop · Fix")
+
+    def test_a_nul_in_the_folder_or_the_command_cannot_be_run_and_says_so(self):
+        for directory, command in (("/srv/a\0b", "exec x"), ("/srv", "exec x\0y")):
+            with self.subTest(directory=directory, command=command):
+                runner = standins.Runner()
+
+                with self.assertRaises(OSError) as raised:
+                    self.apple(runner).open_tab("porchlight_view_shop-01AAA", "t", directory, command, lambda: 1)
+
+                self.assertIn("NUL", str(raised.exception))
+                self.assertEqual(runner.calls, [], "nothing is run")
+
     def test_asks_again_when_the_window_did_not_start_and_then_gives_up(self):
         runner = standins.Runner()
 
