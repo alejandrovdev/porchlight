@@ -11,7 +11,7 @@ you can start, follow and close them from the Claude mobile app.
 
 Contents: [The problem it solves](#the-problem-it-solves) ·
 [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start) ·
-[Linking and unlinking folders](#linking-and-unlinking-folders) ·
+[Setting up this Mac](#setting-up-this-mac) · [Linking and unlinking folders](#linking-and-unlinking-folders) ·
 [How it works](#how-it-works) · [Features and presets](#features-and-presets) ·
 [Configuration](#configuration) · [Commands](#commands) ·
 [Running and stopping](#running-and-stopping) · [Security and privacy](#security-and-privacy) ·
@@ -103,6 +103,14 @@ runs in the background until you link a folder with `porchlight init`.
        No session the server started is running.
    ```
 
+   Each line is one session: its short id; its state (`free` waits for you, `used` is one
+   you wrote in, `closed` ended and `porchlight reopen` brings it back); when it last
+   changed; its name in the app; and where it runs: the process id and its Remote Control
+   session (`not in the app yet` until the app has it), plus `hidden` while it has no tab,
+   or `not running`. A free session always waits hidden; a session in use gets a tab, unless
+   the project has no `tabs` or its tab failed three times, and then `status` prints below
+   it the command that attaches to it.
+
 With the `server` feature on, you can also create new sessions on this Mac from the app.
 
 ### What `setup` asks
@@ -155,6 +163,30 @@ an old porch lantern moves beside them and your answers so far are listed under 
 A smaller terminal gets plain lines: the title, the keys and the options. With fewer
 colors only the title and errors are colored. Set `NO_COLOR` to any value to draw plain
 lines without colors.
+
+## Setting up this Mac
+
+`setup` changes the terminal and the `[defaults]` that new projects start from; linked
+projects keep their own values. It takes the same flags as `init`, except `--name` and
+`--base`, and also `--keep-awake always|plugged-in` and `--install-missing`; its
+`--terminal` also takes `none`, which leaves `terminal` out of the configuration:
+
+```sh
+porchlight setup --terminal warp --permission-mode plan --preset recommended --yes
+```
+
+`--yes` alone installs nothing. Add `--install-missing` to install what is missing with
+Homebrew, as the **Install what is missing** screen does:
+
+```sh
+porchlight setup --terminal warp --permission-mode plan --install-missing --yes
+```
+
+When nothing is missing it says so. When something is missing but Homebrew is not found,
+it says that nothing was installed and why, saves the rest, and exits with 1.
+
+When projects are already linked, it brings their agents up to date afterwards, as `apply`
+does.
 
 ## Linking and unlinking folders
 
@@ -224,30 +256,6 @@ porchlight deinit ~/Projects/shop --yes
 
 If the server cannot be unloaded, the project stays in the configuration and the exit code
 is 1: run `deinit` again.
-
-### `porchlight setup`
-
-`setup` changes the terminal and the `[defaults]` that new projects start from; linked
-projects keep their own values. It takes the same flags as `init`, except `--name` and
-`--base`, and also `--keep-awake always|plugged-in` and `--install-missing`; its
-`--terminal` also takes `none`, which leaves `terminal` out of the configuration:
-
-```sh
-porchlight setup --terminal warp --permission-mode plan --preset recommended --yes
-```
-
-`--yes` alone installs nothing. Add `--install-missing` to install what is missing with
-Homebrew, as the **Install what is missing** screen does:
-
-```sh
-porchlight setup --terminal warp --permission-mode plan --install-missing --yes
-```
-
-When nothing is missing it says so. When something is missing but Homebrew is not found,
-it says that nothing was installed and why, saves the rest, and exits with 1.
-
-When projects are already linked, it brings their agents up to date afterwards, as `apply`
-does.
 
 ## How it works
 
