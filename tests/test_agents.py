@@ -775,6 +775,18 @@ class Uninstall(OnTheMac):
         self.assertFalse((self.root / "logs").exists())
         self.assertEqual(self.printed[-1], "Removed the configuration, the state and the logs.")
 
+    def test_purge_removes_the_state_folder_that_saving_the_configuration_made(self):
+        """By default the configuration file lives in the state folder: whoever saves it first
+        makes that folder, and the tool owns it."""
+        shared = self.root / "state"
+        self.mac.config_file = shared / "config.toml"
+        config.save(config.Config("warp", (), config.Defaults()), self.mac.config_file)
+
+        self.assertEqual(self.uninstall(servers=True, purge=True), 0)
+
+        self.assertFalse(shared.exists())
+        self.assertEqual(self.printed[-1], "Removed the configuration, the state and the logs.")
+
     def test_purge_removes_no_configuration_file_it_was_not_given(self):
         default = self.root / "default.toml"
         default.write_text("")

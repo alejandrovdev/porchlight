@@ -31,6 +31,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from . import names
+from .atoms import state
+
 
 @dataclass(frozen=True)
 class Feature:
@@ -326,9 +329,10 @@ def load(path=None):
 
 
 def save(config, path=None):
-    """Write a configuration, replacing the file in one step."""
+    """Write a configuration, replacing the file in one step. A folder made for it is marked
+    as the tool's, as the state folder is: by default they are the same folder."""
     path = Path(path) if path else default_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    state.claim(path.parent, names.MARKER)
     draft = path.with_name(path.name + ".new")
     draft.write_text(dump(config), encoding="utf-8")
     os.replace(draft, path)
