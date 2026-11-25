@@ -884,9 +884,24 @@ class Uninstall(OnTheMac):
 
         self.assertTrue(self.mac.config_file.exists())
         self.assertIn(B, self.sessions(self.blog))
+        # The service that ended a session the app archived is gone: only its tab or its terminal ends it.
         self.assertEqual(
             self.printed[-1],
-            "Nothing was purged: 1 session still runs. Archive it in the app, or close its tab, and run this again.",
+            "Nothing was purged: 1 session still runs. Close its tab, or end it in its terminal, and run this again.",
+        )
+        self.assertFalse(any("Archive" in line for line in self.printed), self.printed)
+
+    def test_purge_refusal_speaks_of_several_sessions_in_the_plural(self):
+        self.mac.config_file.write_text("")
+        self.session(self.blog, A, "used", 601)
+        self.session(self.blog, B, "used", 602)
+
+        self.assertEqual(self.uninstall(servers=True, purge=True), 1)
+
+        self.assertEqual(
+            self.printed[-1],
+            "Nothing was purged: 2 sessions still run. Close their tabs, or end them in their terminals,"
+            " and run this again.",
         )
 
     def test_purge_refuses_while_a_session_of_a_project_no_longer_configured_still_runs(self):
