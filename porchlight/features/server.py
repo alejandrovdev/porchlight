@@ -21,7 +21,8 @@ The server leaves a session's worktree, `.claude/worktrees/bridge-<session>`, be
 the session ends. A pass removes it by the rule of a ready session's worktree
 (`ready_sessions.tidy_worktree`): only once no process runs its session and the worktree
 and its transcript have been quiet for a while, only when git lists it as a worktree of the
-repository, and only when it is clean and its HEAD is on the base branch; otherwise it is
+repository, and only when it is clean, its HEAD is on the base branch and no file
+`.worktreeinclude` lists was changed in it; otherwise it is
 left, unlocked, and the project's log says why. A locked worktree is looked at only when
 Claude Code locked it (its reason starts with "claude ") and no process the reason names
 runs; any other lock leaves it as it is, still locked. Each worktree is checked once after
