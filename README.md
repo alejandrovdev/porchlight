@@ -3,9 +3,8 @@
 Leave a light on for your phone: porchlight keeps Claude Code sessions ready on your Mac so
 you can start, follow and close them from the Claude mobile app.
 
-> **Status: early.** porchlight works and is used every day, but while its version starts
-> with 0, commands and the configuration file may still change between minor releases (see
-> the [changelog](CHANGELOG.md)).
+> **Status: stable.** From 1.0.0, what [Compatibility](#compatibility) lists changes only
+> in a major release; the [changelog](CHANGELOG.md) says what each release brings.
 
 ![porchlight setup: the lantern, the steps, the features panel and the details of the option under the cursor](docs/images/setup.png)
 
