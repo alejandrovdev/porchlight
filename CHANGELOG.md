@@ -5,9 +5,19 @@ major version is 0, a minor release may change commands or the configuration fil
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-25
+
 ### Added
 
+- Ready sessions copy into their worktree the ignored files the repository's
+  `.worktreeinclude` lists, as Claude Code does for its own worktrees.
+- Once the server's ended session's worktree is removed, its branch is deleted with
+  `git branch -d` when all its commits are on the base branch.
+- `doctor` advises `git remote set-head origin --auto` when a repository's origin has no
+  recorded default branch.
 - The MIT License; the repository and its Homebrew tap are public.
+- Continuous integration on macOS with Python 3.11 and 3.15, this changelog, and `docs/`
+  for how porchlight works and for troubleshooting.
 
 ## [0.1.4] - 2026-11-25
 
@@ -63,7 +73,8 @@ and close with the phone's sessions, closed sessions reopened by name, the Remot
 server's sessions followed and listed in `/resume`, keep-awake, and `setup`, `init`,
 `deinit`, `apply`, `status`, `doctor`, `reopen`, `view`, `start`, `stop` and `uninstall`.
 
-[Unreleased]: https://github.com/alejandrovdev/porchlight/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/alejandrovdev/porchlight/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/alejandrovdev/porchlight/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/alejandrovdev/porchlight/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/alejandrovdev/porchlight/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/alejandrovdev/porchlight/compare/v0.1.1...v0.1.2
