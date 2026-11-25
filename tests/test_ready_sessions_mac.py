@@ -520,6 +520,60 @@ class WorktreeInclude(OnTheMac):
             self.mac.log_text(self.project),
         )
 
+    def finished(self, *, write_include=".env\n"):
+        """A free session made with the repository's .env copied in, then left: its record."""
+        (self.repository / ".env").write_text("secret\n", encoding="utf8")
+        (self.repository / ".worktreeinclude").write_text(write_include, encoding="utf8")
+        ((session, record),) = self.create()["sessions"].items()
+        return record
+
+    def test_a_finished_worktree_whose_listed_copy_changed_is_kept_and_the_log_says_why(self):
+        record = self.finished()
+        copy = Path(record["worktree"]) / ".env"
+        copy.write_text("secret, changed in the worktree\n", encoding="utf8")
+
+        ready_sessions.tidy(self.project, record, self.mac)
+
+        self.assertEqual(copy.read_text(encoding="utf8"), "secret, changed in the worktree\n")
+        log = self.mac.log_text(self.project)
+        reason = "kept the worktree %s (files listed in .worktreeinclude changed or added in it: .env)" % Path(
+            record["worktree"]
+        ).name
+        self.assertEqual(log.count(reason), 1)
+        self.assertNotIn("removed the worktree", log)
+
+    def test_a_listed_file_only_the_worktree_has_keeps_it(self):
+        self.real_git("rm", "-q", "--cached", ".gitignore")
+        (self.repository / ".gitignore").write_text(".env*\n.claude/worktrees/\n", encoding="utf8")
+        self.real_git("add", ".gitignore")
+        self.real_git("commit", "-q", "-m", "ignore every .env")
+        record = self.finished(write_include=".env*\n")
+        (Path(record["worktree"]) / ".env.local").write_text("made in the worktree\n", encoding="utf8")
+        (self.repository / ".env").unlink()  # and the original of the copy is gone
+
+        ready_sessions.tidy(self.project, record, self.mac)
+
+        self.assertTrue((Path(record["worktree"]) / ".env.local").is_file())
+        self.assertIn(
+            "(files listed in .worktreeinclude changed or added in it: .env, .env.local)",
+            self.mac.log_text(self.project),
+        )
+
+    def test_unchanged_copies_and_other_ignored_files_go_with_the_worktree_as_before(self):
+        self.real_git("rm", "-q", "--cached", ".gitignore")
+        (self.repository / ".gitignore").write_text(".env\n.claude/worktrees/\nout/\n", encoding="utf8")
+        self.real_git("add", ".gitignore")
+        self.real_git("commit", "-q", "-m", "ignore the build")
+        record = self.finished()
+        (Path(record["worktree"]) / "out").mkdir()
+        (Path(record["worktree"]) / "out" / "app.js").write_text("built\n", encoding="utf8")
+
+        ready_sessions.tidy(self.project, record, self.mac)
+
+        self.assertFalse(Path(record["worktree"]).exists())
+        self.assertIn("removed the worktree %s" % Path(record["worktree"]).name, self.mac.log_text(self.project))
+        self.assertEqual((self.repository / ".env").read_text(encoding="utf8"), "secret\n", "the original stays")
+
     def test_without_a_worktreeinclude_the_session_starts_as_before(self):
         (self.repository / ".env").write_text("secret\n", encoding="utf8")
 

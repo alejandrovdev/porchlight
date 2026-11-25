@@ -38,8 +38,9 @@ A new worktree gets the files the repository's `.worktreeinclude` lists, as Clau
 own worktrees do, before its session starts; a file that cannot be copied is logged.
 
 Only sessions in this project's own state are ever stopped or tidied; a session someone
-started by hand is never touched. A worktree is removed only when it is clean and its HEAD
-is on the base branch; otherwise it is unlocked and left.
+started by hand is never touched. A worktree is removed only when it is clean, its HEAD is
+on the base branch and each file `.worktreeinclude` lists in it is the repository's own,
+unchanged; otherwise it is unlocked and left.
 
 Text a session brings (its first prompt, its title, its session in the app) is kept
 printable (`text.one_line`), and so is what is printed or logged of it: a control character
@@ -423,11 +424,25 @@ def tidy(project, record, mac):
         record["branch"] = tidied[1]
 
 
+def changed_copies(repository, path, mac):
+    """Why a worktree is kept for the files its repository's .worktreeinclude lists: some
+    differ from the repository's or only the worktree has them. None when nothing listed
+    would be lost; other ignored files (what a build makes) never keep it."""
+    try:
+        paths = include.unsaved(mac.git, repository, path)
+    except (OSError, subprocess.SubprocessError) as error:
+        return "the files listed in %s could not be compared: %s" % (include.FILE, str(error)[:300])
+    if not paths:
+        return None
+    return "files listed in %s changed or added in it: %s" % (include.FILE, ", ".join(paths)[:300])
+
+
 def tidy_worktree(project, path, mac, log=None):
     """Remove a worktree of the project's repository whose session ended, when nothing in it
-    would be lost: it is clean and its HEAD is on the base branch. Otherwise unlock it,
-    leave it and say why in the project's log, or to `log` when one is given. Its branch is
-    deleted only when it was made for a ready session. (what happened, its branch):
+    would be lost: it is clean, its HEAD is on the base branch and the files .worktreeinclude
+    lists in it are the repository's, unchanged. Otherwise unlock it, leave it and say why
+    in the project's log, or to `log` when one is given. Its branch is deleted only when it
+    was made for a ready session. (what happened, its branch):
     "removed", "kept" or "failed"; None when the folder is not there."""
     say = log or (lambda line: mac.log(project, line))
     repository = names.repository(project)
@@ -439,11 +454,15 @@ def tidy_worktree(project, path, mac, log=None):
     base = base_branch(project, mac)
     merged = base is not None and worktrees.is_merged(mac.git, path, base)
     worktrees.unlock(mac.git, repository, path)
-    if not (clean and merged):
-        if base is None:
-            why = NO_BASE
-        else:
-            why = "it has changes" if merged else "its commits are not on %s" % base
+    if base is None:
+        why = NO_BASE
+    elif not merged:
+        why = "its commits are not on %s" % base
+    elif not clean:
+        why = "it has changes"
+    else:
+        why = changed_copies(repository, path, mac)
+    if why is not None:
         say("kept the worktree %s (%s)" % (name, why))
         return "kept", branch
     removed = worktrees.remove(mac.git, repository, path)

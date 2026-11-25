@@ -6,7 +6,9 @@ a pattern matches it; tracked files are in the worktree already. Git decides bot
 links are skipped, nothing is copied from another worktree in `.claude/worktrees/`, a file
 the worktree already has is left alone, and nothing is written outside the worktree.
 
-    copy(git, repository, worktree)   Copied(files, failures), each path relative
+    copy(git, repository, worktree)      Copied(files, failures), each path relative
+    unsaved(git, repository, worktree)   the listed files of a worktree that removing it
+                                         would lose: changed there, or only there
 """
 
 import os
@@ -34,11 +36,13 @@ def ignored(git, repository, *exclude):
     return {path for path in answer.stdout.split("\0") if path}
 
 
-def listed(git, repository):
-    """The files to copy: ignored by git and matched by .worktreeinclude, in order."""
+def listed(git, repository, folder=None):
+    """The files to copy: ignored by git and matched by .worktreeinclude, in order. With a
+    `folder` (a worktree of the repository), those in it, by the repository's patterns."""
     repository = Path(repository)
-    patterns = ignored(git, repository, "--exclude-from=" + str(repository / FILE))
-    paths = ignored(git, repository, "--exclude-standard") & patterns
+    folder = Path(folder) if folder is not None else repository
+    patterns = ignored(git, folder, "--exclude-from=" + str(repository / FILE))
+    paths = ignored(git, folder, "--exclude-standard") & patterns
     # Another worktree shows as one folder entry; a leftover folder there shows its files.
     return sorted(path for path in paths if not path.startswith(WORKTREES))
 
@@ -104,3 +108,37 @@ def copy(git, repository, worktree):
         except OSError as error:
             copied.failures.append((path, error.strerror or str(error)))
     return copied
+
+
+def same(path, original):
+    """Whether a file of a worktree is the repository's own, unchanged: a link to the same
+    place, or a file with the same bytes. One that cannot be read is not."""
+    try:
+        if os.path.islink(path) or os.path.islink(original):
+            return os.path.islink(path) and os.path.islink(original) and os.readlink(path) == os.readlink(original)
+        if not os.path.isfile(original):
+            return False
+        with open(path, "rb") as copied, open(original, "rb") as kept:
+            while True:
+                block = copied.read(65536)
+                if block != kept.read(65536):
+                    return False
+                if not block:
+                    return True
+    except OSError:
+        return False
+
+
+def unsaved(git, repository, worktree):
+    """The files .worktreeinclude lists in a worktree that the repository does not have as
+    they are, in order: a copy changed in the worktree, or a file only the worktree has.
+    Empty when the repository has no .worktreeinclude (git is then not asked). Raises
+    OSError when git cannot list them."""
+    repository = os.path.realpath(repository)
+    if not os.path.isfile(os.path.join(repository, FILE)):
+        return []
+    return [
+        path
+        for path in listed(git, repository, worktree)
+        if not same(os.path.join(worktree, path), os.path.join(repository, path))
+    ]

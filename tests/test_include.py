@@ -1,5 +1,6 @@
 """Tests of copying the files a repository's .worktreeinclude lists into a new worktree,
-against a scratch repository and the real git."""
+and of finding the copies removing it would lose, against a scratch repository and the
+real git."""
 
 import os
 import shutil
@@ -26,7 +27,9 @@ def run_git(directory, *arguments):
 
 
 @unittest.skipUnless(GIT, "git is not installed")
-class Copy(unittest.TestCase):
+class Repository(unittest.TestCase):
+    """A scratch repository with one worktree of it."""
+
     def setUp(self):
         environment = mock.patch.dict(os.environ, QUIET_GIT)
         environment.start()
@@ -56,6 +59,8 @@ class Copy(unittest.TestCase):
     def include(self, *patterns):
         self.write(include.FILE, "".join(pattern + "\n" for pattern in patterns))
 
+
+class Copy(Repository):
     def test_without_a_worktreeinclude_nothing_is_copied_and_git_is_not_asked(self):
         self.write(".env", "secret\n")
 
@@ -203,6 +208,57 @@ class Copy(unittest.TestCase):
 
         self.assertEqual(copied.files, [])
         self.assertEqual(copied.failures, [("", "fatal: broken")])
+
+
+
+class Unsaved(Repository):
+    """The listed files of a worktree that the repository does not have as they are."""
+
+    def test_copies_as_they_were_lose_nothing_and_without_a_worktreeinclude_git_is_not_asked(self):
+        self.write(".env", "secret\n")
+        self.assertEqual(include.unsaved(self.git, self.repository, self.worktree), [])
+        self.assertEqual(self.asked, [])
+
+        self.include(".env", "local/")
+        self.write("local/a", "a\n")
+        include.copy(self.git, self.repository, self.worktree)
+
+        self.assertEqual(include.unsaved(self.git, self.repository, self.worktree), [])
+
+    def test_a_changed_copy_and_a_listed_file_only_the_worktree_has_are_named_in_order(self):
+        self.write(".env", "secret\n")
+        self.include(".env", "local/")
+        include.copy(self.git, self.repository, self.worktree)
+        self.write(".env", "secret, changed\n", self.worktree)
+        self.write("local/new", "made here\n", self.worktree)
+        self.write("out/app.js", "built\n", self.worktree)  # ignored, but not listed
+
+        self.assertEqual(include.unsaved(self.git, self.repository, self.worktree), [".env", "local/new"])
+
+    def test_a_copy_whose_original_is_gone_is_named(self):
+        self.write(".env", "secret\n")
+        self.include(".env")
+        include.copy(self.git, self.repository, self.worktree)
+        (self.repository / ".env").unlink()
+
+        self.assertEqual(include.unsaved(self.git, self.repository, self.worktree), [".env"])
+
+    def test_a_link_counts_as_the_same_only_when_it_points_where_the_repositorys_does(self):
+        self.include("link.env")
+        os.symlink("/etc/hosts", self.repository / "link.env")
+        os.symlink("/etc/hosts", self.worktree / "link.env")
+        self.assertEqual(include.unsaved(self.git, self.repository, self.worktree), [])
+
+        (self.worktree / "link.env").unlink()
+        os.symlink("/etc/passwd", self.worktree / "link.env")
+        self.assertEqual(include.unsaved(self.git, self.repository, self.worktree), ["link.env"])
+
+    def test_git_that_fails_raises(self):
+        self.include(".env")
+        failing = lambda directory, *arguments: subprocess.CompletedProcess(arguments, 128, "", "fatal: broken\n")
+
+        with self.assertRaisesRegex(OSError, "fatal: broken"):
+            include.unsaved(failing, self.repository, self.worktree)
 
 
 if __name__ == "__main__":
