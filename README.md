@@ -405,7 +405,7 @@ at most 32 characters long.
 
 | Key | Type | Required | Rules |
 | --- | --- | --- | --- |
-| `path` | text | yes | The repository's top folder, absolute or starting with `~`. One project per folder. `init` writes the full path. |
+| `path` | text | yes | The repository's top folder, absolute or starting with `~/`; a relative path is refused, since the agents do not run from your folder. One project per folder. `init` writes the full path. |
 | `permission_mode` | text | yes | One word: the mode Claude Code starts each of the project's sessions in. `doctor` checks it against the modes `claude --help` lists. |
 | `preset` | text | one of the two | `minimal` or `recommended`. |
 | `features` | list of text | one of the two | At least one feature, including the features each one builds on. |
