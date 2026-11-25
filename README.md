@@ -16,7 +16,7 @@ Contents: [The problem it solves](#the-problem-it-solves) ·
 [Configuration](#configuration) · [Commands](#commands) ·
 [Running and stopping](#running-and-stopping) · [Security and privacy](#security-and-privacy) ·
 [Troubleshooting](#troubleshooting) · [Uninstall](#uninstall) · [Development](#development) ·
-[License](#license)
+[Compatibility](#compatibility) · [Contributing](#contributing) · [License](#license)
 
 ## The problem it solves
 
@@ -82,8 +82,9 @@ runs in the background until you link a folder with `porchlight init`.
    Then run `porchlight doctor`: each line should say `ok`. The service looks at every
    project every 20 seconds, so the ready session follows within about half a minute.
 
-3. **On the phone**, open the Claude app. The ready session appears in your session list;
-   its name starts with the project's name (`shop`). Write in it and work starts.
+3. **On the phone**, open the Claude app and tap **Code**. The ready session is in the
+   session list, with a computer icon and a green dot while it is online; its name starts
+   with the project's name (`shop`). Write in it and work starts.
 4. **On the Mac**, with your terminal running, a tab opens on that session soon after your
    first message, and porchlight prepares the next ready session. Archiving the session in
    the app ends it and closes its tab (in Terminal, when its profile closes windows: see
@@ -446,6 +447,24 @@ You do not need to type `run` or `server`: the login agents run them.
 | 1 | It refused, or something needs attention: for example a check of `doctor` failed, a project's folder is missing in `status`, the configuration has problems, you quit a screen, or a running server was left in place by `uninstall`. |
 | 2 | The command line is wrong (including a screen no flag answered when there is no terminal to ask on), or `PORCHLIGHT_LABEL` is not a reverse domain name. |
 
+## Compatibility
+
+From 1.0.0, porchlight follows [Semantic Versioning](https://semver.org): a minor or patch
+release keeps working with whatever you built on the following, and only a major release
+changes them, with the changelog saying how to move:
+
+- the commands, their options and what they do, and the exit codes: 0 when a command did
+  what was asked, 1 when it refused or something needs attention, 2 when the command line
+  is wrong;
+- the configuration file: where it is, its keys and what they mean (a minor release may add
+  an optional key);
+- the files and folders porchlight writes, and the labels of its login agents;
+- the `PORCHLIGHT_*` environment variables this README names.
+
+Not part of it: `porchlight run` and `porchlight server`, which the login agents call; the
+wording and layout of what the commands print and of the logs (read them, do not parse
+them); and the look of the setup screens.
+
 ## Running and stopping
 
 > [!IMPORTANT]
@@ -665,6 +684,11 @@ starts, with folders and files made absolute. The rehearsal is still real where 
 `start` load agents into your launchd under the label you chose, and its sessions use your
 Claude Code account and the repository you link. End it with
 `porchlight uninstall --servers --purge` under the same variables.
+
+## Contributing
+
+Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Report a
+vulnerability privately, as [SECURITY.md](SECURITY.md) says.
 
 ## License
 
