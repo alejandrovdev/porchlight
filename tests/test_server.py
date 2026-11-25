@@ -173,6 +173,10 @@ class BridgeWorktrees(unittest.TestCase):
         self.status = ""  # what `git status --porcelain` prints in a worktree
         self.on_base = True
         self.locks = {}  # folder: the reason of its lock, as `git worktree lock --reason` took it
+        self.current = {}  # worktree name: the branch it is on; else worktree-<name>, as Claude Code names it
+        self.branch_on_base = 0  # what `git merge-base --is-ancestor <branch> <base>` returns
+        self.checkouts = {}  # other worktrees: folder: the branch it has checked out
+        self.deleted = 0  # what `git branch -d` returns
         self.mac.git_runner.answers = self.git
 
     def tearDown(self):
@@ -196,15 +200,24 @@ class BridgeWorktrees(unittest.TestCase):
                 if f in self.locks:
                     block += ("locked %s" % self.locks[f]).rstrip() + "\n"
                 blocks.append(block)
+            for f, branch in self.checkouts.items():
+                blocks.append("worktree %s\nHEAD 1234\nbranch refs/heads/%s\n" % (f, branch))
             return standins.result(stdout="\n".join(blocks) + "\n")
         if asked[:1] == ["symbolic-ref"]:
             return standins.result(stdout="origin/main\n")
         if asked[:1] == ["status"]:
             return standins.result(stdout=self.status)
+        if asked[:1] == ["merge-base"] and asked[2] != "HEAD":
+            return standins.result(self.branch_on_base)
         if asked[:1] == ["merge-base"]:
             return standins.result(0 if self.on_base else 1)
         if asked[:2] == ["branch", "--show-current"]:
-            return standins.result(stdout="worktree-%s\n" % Path(words[2]).name)
+            name = Path(words[2]).name
+            return standins.result(stdout="%s\n" % self.current.get(name, "worktree-" + name))
+        if asked[:2] == ["branch", "-d"]:
+            stderr = "error: the branch '%s' is not fully merged\nhint: If you are sure...\n" % asked[2]
+            stderr = stderr if self.deleted else ""
+            return standins.result(self.deleted, stderr=stderr)
         if asked[:2] == ["worktree", "remove"]:
             shutil.rmtree(asked[2])
         return None
@@ -456,6 +469,147 @@ class BridgeWorktrees(unittest.TestCase):
 
         self.assertFalse(worktree.exists())
         self.assertEqual([call[-1] for call in self.asked("worktree", "unlock")], [str(worktree)])
+
+    BRANCH = "worktree-bridge-" + ENDED  # the branch the server's session made, as Claude Code names it
+
+    def branch_lines(self):
+        """The log's lines about a branch, without their time."""
+        lines = self.mac.log_text(self.project).splitlines()
+        return [line.split(" ", 2)[2] for line in lines if "branch" in line]
+
+    def test_once_its_worktree_is_removed_a_session_branch_whose_commits_are_on_the_base_is_deleted(self):
+        worktree = self.bridge()
+
+        self.tidy(times=3)
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual(
+            [call[1:] for call in self.asked("merge-base", "--is-ancestor", self.BRANCH)],
+            [["-C", str(self.repository), "merge-base", "--is-ancestor", self.BRANCH, "origin/main"]],
+        )
+        self.assertEqual(
+            [call[1:] for call in self.asked("branch", "-d")], [["-C", str(self.repository), "branch", "-d", self.BRANCH]]
+        )
+        self.assertEqual(self.asked("branch", "-D"), [], "never forced")
+        removed = "removed the worktree bridge-%s" % ENDED
+        deleted = "deleted the branch %s of the ended server session %s: its commits are on origin/main" % (
+            self.BRANCH,
+            ENDED,
+        )
+        log = self.mac.log_text(self.project)
+        self.assertEqual(log.count(deleted), 1)
+        self.assertLess(log.index(removed), log.index(deleted), "the worktree goes first")
+        self.assertEqual(self.mac.store(self.project, server.WORKTREES).load({}), {})
+
+    def test_a_session_branch_with_commits_of_its_own_is_kept_and_logged_once(self):
+        worktree = self.bridge()
+        self.branch_on_base = 1
+
+        self.tidy(times=3)
+        self.something_else_is_logged()
+        self.new_branch("unrelated-branch")
+        self.tidy()
+
+        self.assertFalse(worktree.exists(), "the worktree is removed as before")
+        self.assertEqual(self.asked("branch", "-d"), [])
+        self.assertEqual(self.asked("branch", "-D"), [])
+        line = "kept the branch %s of the ended server session %s: it has commits that are not on origin/main" % (
+            self.BRANCH,
+            ENDED,
+        )
+        self.assertEqual(self.log_count(line), 1)
+        self.assertEqual(self.branch_lines(), [line])
+
+    def test_a_session_branch_another_worktree_has_checked_out_is_kept(self):
+        worktree = self.bridge()
+        other = self.repository / ".claude" / "worktrees" / "by-hand"
+        self.checkouts[other] = self.BRANCH
+
+        self.tidy(times=3)
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual(self.asked("branch", "-d"), [])
+        self.assertEqual(self.asked("branch", "-D"), [])
+        self.assertEqual(self.asked("merge-base", "--is-ancestor", self.BRANCH), [], "not asked of a branch in use")
+        line = "kept the branch %s of the ended server session %s: the worktree %s has it checked out" % (
+            self.BRANCH,
+            ENDED,
+            other,
+        )
+        self.assertEqual(self.log_count(line), 1)
+        self.assertEqual(self.branch_lines(), [line])
+
+    def test_a_branch_that_is_not_the_sessions_own_is_never_deleted(self):
+        for branch in ("feature-x", "worktree-bridge-cse_01ZZZ", "worktree-bridge-" + ENDED + "-2", "main", ""):
+            with self.subTest(branch=branch):
+                self.tearDown()
+                self.setUp()
+                worktree = self.bridge()
+                self.current["bridge-" + ENDED] = branch
+
+                self.tidy(times=2)
+
+                self.assertFalse(worktree.exists(), "the worktree is removed as before")
+                self.assertEqual(self.asked("branch", "-d"), [])
+                self.assertEqual(self.asked("branch", "-D"), [])
+                self.assertEqual(self.asked("merge-base", "--is-ancestor", "HEAD"), self.asked("merge-base"))
+                self.assertEqual(self.branch_lines(), [])
+
+    def test_the_merged_branch_rule_leaves_a_ready_sessions_branch_to_the_shared_tidy(self):
+        worktree = self.bridge()
+        self.current["bridge-" + ENDED] = names.branch(self.project, "aaaaaaaa-1111-2222-3333-444444444444")
+
+        self.tidy()
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual(self.asked("branch", "-d"), [])
+        self.assertEqual(self.asked("merge-base"), self.asked("merge-base", "--is-ancestor", "HEAD"))
+        self.assertEqual(self.branch_lines(), [])
+
+    def test_anything_unclear_about_a_session_branch_leaves_it_and_says_nothing(self):
+        for case in ("the worktree list fails", "the ancestry check fails"):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                worktree = self.bridge()
+                lists = []
+                answer = self.git
+
+                def git(words):
+                    if words[3:5] == ["worktree", "list"]:
+                        lists.append(words)
+                        if case == "the worktree list fails" and len(lists) > 1:
+                            return standins.result(128, stderr="fatal: oops\n")
+                    return answer(words)
+
+                self.mac.git_runner.answers = git
+                if case == "the ancestry check fails":
+                    self.branch_on_base = 128
+
+                self.tidy(times=2)
+
+                self.assertFalse(worktree.exists())
+                self.assertEqual(self.asked("branch", "-d"), [])
+                self.assertEqual(self.asked("branch", "-D"), [])
+                self.assertEqual(self.branch_lines(), [])
+
+    def test_a_session_branch_git_refuses_to_delete_is_kept_and_said_once(self):
+        worktree = self.bridge()
+        self.deleted = 1
+
+        self.tidy(times=3)
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual(len(self.asked("branch", "-d")), 1)
+        self.assertEqual(self.asked("branch", "-D"), [], "never forced")
+        line = "could not delete the branch %s of the ended server session %s: error: the branch '%s' is not fully merged" % (
+            self.BRANCH,
+            ENDED,
+            self.BRANCH,
+        )
+        self.assertEqual(self.log_count(line), 1)
+        self.assertEqual(self.branch_lines(), [line])
+        self.assertNotIn("hint:", self.mac.log_text(self.project), "git's refusal is said in one line")
 
 if __name__ == "__main__":
     unittest.main()

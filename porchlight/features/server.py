@@ -4,7 +4,8 @@ user's own Claude Code configuration.
 
     run(project, mac)              become the server (what a background service runs)
     tidy_worktrees(project, mac)   remove the worktrees of its sessions that ended, when
-                                   nothing in them would be lost; prints nothing
+                                   nothing in them would be lost, then their branches when
+                                   their commits are on the base branch; prints nothing
 
 The server's sessions have no terminal and the app cannot start one again once it is
 archived: `view_tabs` shows each in a read-only tab and `resume_list` keeps a copy that
@@ -23,11 +24,17 @@ and its transcript have been quiet for a while, only when git lists it as a work
 repository, and only when it is clean and its HEAD is on the base branch; otherwise it is
 left, unlocked, and the project's log says why. A locked worktree is looked at only when
 Claude Code locked it (its reason starts with "claude ") and no process the reason names
-runs; any other lock leaves it as it is, still locked. Its branch is the server's and
-stays. Each worktree is checked once after its session ends, and again when something in
-it or in the repository's branches changed, or when the process that held its lock ended;
-the log says why a worktree is left only when that reason is new. A folder of another
-name, a link, and anything unclear (a git error) are left alone.
+runs; any other lock leaves it as it is, still locked. Each worktree is checked once after
+its session ends, and again when something in it or in the repository's branches changed,
+or when the process that held its lock ended; the log says why a worktree is left only when
+that reason is new. A folder of another name, a link, and anything unclear (a git error)
+are left alone.
+
+Once a worktree is removed, its branch goes too (`git branch -d`, never `-D`), only when it
+is the branch Claude Code made for that session (`worktree-bridge-<session>`), the worktree
+had it checked out, no other worktree has it checked out, and every commit of it is on the
+base branch. Otherwise the branch stays and the log says why, once: the branch is looked at
+only when its worktree is removed. Any other branch is never touched.
 """
 
 import os
@@ -170,6 +177,35 @@ def lock_holders(lock, pids):
     return holders or None
 
 
+def tidy_branch(project, name, branch, mac):
+    """Delete the branch of an ended session whose worktree `name` was just removed, when it
+    is that session's own, no worktree has it checked out and all its commits are on the
+    base branch; `git branch -d` only. Otherwise leave it and say why; a git error says
+    nothing. `branch` is the one the worktree had checked out."""
+    if not branch or branch != worktrees.branch_of(name):
+        return  # not one porchlight can tell is that session's
+    repository = names.repository(project)
+    base = ready_sessions.base_branch(project, mac)
+    holders = worktrees.checked_out(mac.git, repository) if base is not None else None
+    if holders is None:
+        return
+    which = "the branch %s of the ended server session %s" % (branch, name[len(worktrees.SERVER_PREFIX) :])
+    if branch in holders:
+        mac.log(project, "kept %s: the worktree %s has it checked out" % (which, holders[branch]))
+        return
+    on_base = worktrees.is_on(mac.git, repository, branch, base)
+    if on_base is False:
+        mac.log(project, "kept %s: it has commits that are not on %s" % (which, base))
+    if not on_base:
+        return
+    deleted = worktrees.delete_merged_branch(mac.git, repository, branch)
+    if deleted.returncode != 0:
+        why = (deleted.stderr.strip().splitlines() or [""])[0]  # git's first line; the hints after it name -D
+        mac.log(project, "could not delete %s: %s" % (which, why[:300]))
+    else:
+        mac.log(project, "deleted %s: its commits are on %s" % (which, base))
+
+
 def tidy_worktrees(project, mac):
     """Remove the worktrees of the server's sessions that ended, when nothing in them would
     be lost; leave the others, saying why once. A project without `server` is not looked at."""
@@ -220,6 +256,7 @@ def tidy_worktrees(project, mac):
                 if outcome == "removed":
                     for line in lines:
                         mac.log(project, line)
+                    tidy_branch(project, name, tidied[1], mac)
                 elif lines:
                     said = lines[-1]
             if path.is_dir():
