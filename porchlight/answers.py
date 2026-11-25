@@ -18,8 +18,9 @@ from pathlib import Path
 
 from . import config
 
-PREREQUISITES, TERMINAL, MODE, FEATURES, KEEP_AWAKE, NAME, CONFIRM = (
+PREREQUISITES, INSTALL, TERMINAL, MODE, FEATURES, KEEP_AWAKE, NAME, CONFIRM = (
     "prerequisites",
+    "install_missing",
     "terminal",
     "permission_mode",
     "features",
@@ -35,10 +36,12 @@ FIRST = "recommended"  # the preset the features start from when nothing was cho
 
 def setup_answers(configuration):
     """What setup starts from: the terminal and the defaults saved, else nothing chosen and
-    the recommended features. A Mac set up before without a terminal starts from none."""
+    the recommended features, and installing nothing. A Mac set up before without a terminal
+    starts from none."""
     defaults = configuration.defaults
     set_up = defaults != config.Defaults()
     return {
+        INSTALL: "no",
         TERMINAL: configuration.terminal or (NO_TERMINAL if set_up else None),
         MODE: defaults.permission_mode,
         FEATURES: defaults.features or config.PRESETS[FIRST],
@@ -162,8 +165,9 @@ def features_problem(features):
     return "; ".join(missing)
 
 
-def setup_summary(configuration, answers):
-    """What setup is about to save, in lines."""
+def setup_summary(configuration, answers, installs=()):
+    """What setup is about to save, in lines; and what it installs with Homebrew first when
+    the answer is yes (`installs`: what each is called)."""
     lines = [
         "Terminal: %s" % (answers.get(TERMINAL) or "none"),
         "Default permission mode: %s" % answers[MODE],
@@ -176,6 +180,8 @@ def setup_summary(configuration, answers):
         lines.append("Projects: %s. Their agents are brought up to date; a running server is left as it is." % names)
     else:
         lines.append("No project yet: link one from its folder with porchlight init.")
+    if installs and answers.get(INSTALL) == "yes":
+        lines.append("Install with Homebrew: %s" % ", ".join(installs))
     return lines
 
 

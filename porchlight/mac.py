@@ -8,6 +8,7 @@ passes a Mac whose parts are stand-ins.
 
 import os
 import subprocess
+import sys
 import time
 from functools import cached_property
 from pathlib import Path
@@ -105,6 +106,16 @@ class Mac:
         """Start a program beside this one, with nothing to read and nowhere to print."""
         nowhere = subprocess.DEVNULL
         return subprocess.Popen(list(words), stdin=nowhere, stdout=nowhere, stderr=nowhere)
+
+    def run_in_view(self, words):
+        """Run a program in front of the person, such as an install: it reads this
+        terminal's input and prints on it. Its exit code; 127 when it cannot be started."""
+        for stream in (sys.stdout, sys.stderr):
+            stream.flush()  # what was printed before comes before what it prints
+        try:
+            return subprocess.run(list(words)).returncode
+        except OSError:
+            return 127
 
     def clock(self):
         return time.time()

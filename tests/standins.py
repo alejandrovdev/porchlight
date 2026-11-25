@@ -207,6 +207,8 @@ class StandInMac(Mac):
         self.apps = {name: Terminal(running=False, name=name, title=name.capitalize()) for name in config.TERMINALS}
         self.outputs = {}  # what a command prints, by its words joined with spaces
         self.asked = []  # the commands whose output was read
+        self.installs = []  # the commands run in front of the person, such as brew's
+        self.install_codes = {}  # what such a command exits with, by its words joined with spaces; else 0
         self.claude = "/tools/claude"
         self.porchlight = "/tools/porchlight"
         self.git = worktrees.Git("/tools/git", run=self.git_runner)
@@ -228,6 +230,10 @@ class StandInMac(Mac):
     def output(self, words, any_exit=False):
         self.asked.append(list(words))
         return self.outputs.get(" ".join(words))
+
+    def run_in_view(self, words):
+        self.installs.append(list(words))
+        return self.install_codes.get(" ".join(words), 0)
 
     def processes(self):
         return self.ps() if callable(self.ps) else self.ps

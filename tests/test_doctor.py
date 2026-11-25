@@ -156,15 +156,16 @@ class Checks(Scratch):
         self.assertIn(("missing", "git", "install it with: brew install git"), checks)
         self.assertNotIn("git repository", [what for _, what, _ in checks], "without git nothing is asked of it")
 
-    def test_says_claude_code_is_installed_separately_and_gives_no_address(self):
+    def test_names_the_homebrew_cask_of_claude_code_and_says_to_sign_in(self):
         del self.mac.found["claude"]
 
         checks = self.checks(self.project())
 
         ((state, what, advice),) = [check for check in checks if check[1].startswith("Claude Code")]
-        self.assertEqual((state, what), ("missing", "Claude Code (claude)"))
-        self.assertIn("installed separately", advice)
-        self.assertNotIn("brew", advice)
+        self.assertEqual(
+            (state, what, advice),
+            ("missing", "Claude Code (claude)", "install it with: brew install --cask claude-code, then sign in by running `claude`"),
+        )
         self.assertNotIn("http", advice)
         self.assertFalse([what for _, what, _ in checks if what.startswith("permission mode")])
         self.assertEqual(self.mac.asked, [], "a tool that is not there is not run")
@@ -240,6 +241,48 @@ class Checks(Scratch):
             self.assertEqual((mode.state, mode.failed), ("unknown", False))
             self.assertEqual(mode.advice, "the modes `claude --help` lists could not be read")
             self.assertEqual(self.report(shop), 0)
+
+
+class Prerequisites(Scratch):
+    def test_each_missing_tool_and_warp_carries_the_homebrew_words_that_install_it(self):
+        del self.mac.found["claude"]
+        del self.mac.found["tmux"]
+        self.mac.apps["warp"].is_installed = False
+
+        checks = doctor.prerequisites(self.mac)
+
+        self.assertEqual(
+            [(check.state, check.what, check.install) for check in checks],
+            [
+                ("missing", "Claude Code (claude)", ("install", "--cask", "claude-code")),
+                ("ok", "git at /tools/git", ()),
+                ("missing", "tmux", ("install", "tmux")),
+                ("missing", "Warp", ("install", "--cask", "warp")),
+                ("ok", "%s, a terminal tabs can open in" % self.mac.apps["apple-terminal"].title, ()),
+            ],
+        )
+        self.assertEqual(
+            checks[3].line(),
+            "missing  Warp: install the Warp app for the `tabs` feature with: brew install --cask warp, or leave that feature off",
+        )
+        self.assertEqual(doctor.installable(checks), [checks[0], checks[2], checks[3]])
+        self.assertEqual(
+            [doctor.brew_command(check) for check in doctor.installable(checks)],
+            ["brew install --cask claude-code", "brew install tmux", "brew install --cask warp"],
+        )
+
+    def test_nothing_is_installable_when_nothing_is_missing(self):
+        checks = doctor.prerequisites(self.mac)
+
+        self.assertEqual(checks[3].line(), "ok       Warp, a terminal tabs can open in")
+        self.assertEqual(doctor.installable(checks), [])
+
+    def test_homebrew_is_found_the_way_the_other_tools_are(self):
+        self.assertIsNone(doctor.homebrew(self.mac))
+
+        self.mac.found["brew"] = "/tools/brew"
+
+        self.assertEqual(doctor.homebrew(self.mac), "/tools/brew")
 
 
 class Report(Scratch):

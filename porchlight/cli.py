@@ -228,7 +228,8 @@ def parser():
             "Set up this Mac once: terminal and project defaults.",
             details="Set up porchlight on this Mac once: check what the features need, choose the terminal tabs "
             "open in (or none), the permission mode and features new projects start from, and whether keep-awake "
-            "holds the Mac awake on battery too. Installs nothing.",
+            "holds the Mac awake on battery too. When Homebrew is there, it offers to install what is missing with "
+            "it, after a warning; nothing is installed before the last screen is confirmed.",
         ),
         terminals=config.TERMINALS + (answers.NO_TERMINAL,),
         terminal_help="the terminal app tabs open in, or none: no tab opens",
@@ -237,6 +238,11 @@ def parser():
         "--keep-awake",
         choices=config.KEEP_AWAKE,
         help="when keep-awake holds the Mac awake: always (on battery too) or plugged-in (on AC power only)",
+    )
+    setting_up.add_argument(
+        "--install-missing",
+        action="store_true",
+        help="install what is missing with Homebrew once the configuration is confirmed (--yes alone installs nothing)",
     )
     linking_folder = answered(
         command(
