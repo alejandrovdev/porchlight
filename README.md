@@ -124,6 +124,15 @@ Otherwise they are numbered questions: type the number or the answer and press E
 goes back, `q` or Ctrl-C quits. Quitting, or answering no at the summary, changes nothing
 (exit code 1).
 
+In a terminal with 256 colors and UTF-8 that is at least 80 columns by 24 rows, every step
+is a whole screen: a status bar with a progress bar, the name in large pixels, the steps,
+the options in a panel with a bar under the cursor, and a panel about the option the
+cursor is on (what it does, what it needs and what needs it). From 112 columns by 32 rows
+an old porch lantern moves beside them and your answers so far are listed under the name.
+A smaller terminal gets plain lines: the title, the keys and the options. With fewer
+colors only the title and errors are colored. Set `NO_COLOR` to any value to draw plain
+lines without colors.
+
 ## Linking and unlinking folders
 
 ### `porchlight init [folder]`
