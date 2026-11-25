@@ -153,7 +153,11 @@ def init(chosen, configuration, mac, out, asker):
         answers.FEATURES: given_features(chosen),
         answers.TERMINAL: chosen.terminal,
     }
-    question = "Replace its settings?" if existing else "Link this folder?"
+    def question(given):
+        if existing is None:
+            return "Link this folder?"
+        return "Rename it?" if given[answers.NAME] != existing.name else "Replace its settings?"
+
     steps = [
         screens.name(check),
         screens.permission_mode("Permission mode", modes),
@@ -171,6 +175,8 @@ def init(chosen, configuration, mac, out, asker):
     configured, project = answers.with_project(configuration, got, top, existing, chosen.base)
     if not saved(configured, chosen.config_file, out):
         return 1
+    if existing is not None and existing.name != project.name:
+        out('Renamed "%s" to "%s".' % (existing.name, project.name))
     out('Linked "%s" (%s) in %s.' % (project.name, project.path, chosen.config_file))
     code = agents.apply(configured, mac, out)
     if existing is not None and existing.name != project.name and project.has("server"):

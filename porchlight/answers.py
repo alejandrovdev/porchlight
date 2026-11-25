@@ -167,6 +167,10 @@ def init_summary(configuration, answers, folder, existing=None):
     ]
     if "terminal" in config.tools(answers[FEATURES]):
         lines.append("Terminal: %s" % (answers.get(TERMINAL) or configuration.terminal))
-    if existing is not None:
+    if existing is not None and existing.name != answers[NAME]:
+        lines.append(
+            'This folder is linked already, as "%s": this renames that project to "%s".' % (existing.name, answers[NAME])
+        )
+    elif existing is not None:
         lines.append('It replaces the settings of the linked project "%s".' % existing.name)
     return lines

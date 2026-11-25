@@ -54,5 +54,11 @@ def name(check):
 
 
 def confirm(question, describe):
-    """The last screen: what is about to be saved (`describe(answers)`), and yes or no."""
-    return Screen(answers.CONFIRM, "--yes", lambda given: Confirm("Summary", tuple(describe(given)), question))
+    """The last screen: what is about to be saved (`describe(answers)`), and yes or no. The
+    question may depend on the answers too."""
+
+    def shown(given):
+        asked = question(given) if callable(question) else question
+        return Confirm("Summary", tuple(describe(given)), asked)
+
+    return Screen(answers.CONFIRM, "--yes", shown)

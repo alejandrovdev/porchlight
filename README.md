@@ -110,7 +110,8 @@ With the `server` feature on, you can also create new sessions on this Mac from 
 2. **Permission mode**: starts from the default you chose in `setup`.
 3. **Features**: start from the default features.
 4. **Terminal**: only when the features open tabs and no terminal is set yet.
-5. **Summary**: `Link this folder?`, or `Replace its settings?` for a folder already linked.
+5. **Summary**: `Link this folder?`, or `Replace its settings?` for a folder already linked
+   (`Rename it?` when you changed its name).
 
 The screens are drawn when your terminal can draw them: up and down move, Enter chooses,
 Space turns a feature on or off, Esc goes back, `q` quits (Ctrl-C in a text field).
@@ -132,7 +133,9 @@ goes back, `q` or Ctrl-C quits. Quitting, or answering no at the summary, change
   ```
 
 - In a folder that is linked already, it edits that project: the screens start from its
-  current values. Its folder stays as it is written in the configuration.
+  current values. Its folder stays as it is written in the configuration. A new name
+  renames that project; to link another repository, run `init` in that repository's folder
+  (or pass it: `porchlight init ~/path/to/repository`).
 - After saving, it brings the background agents up to date the way `apply` does: a
   server that is running is left as it is.
 

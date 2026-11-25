@@ -341,6 +341,19 @@ class Init(Linking):
         self.assertEqual((shop.name, shop.path, shop.features), ("shop", str(self.root / "shop"), ("server", "resume-list")))
         self.assertEqual(blog.name, "blog")
 
+    def test_a_new_name_for_a_linked_folder_says_it_renames_that_project(self):
+        self.configure(shop=("server",))
+        keys = standins.Keys(*[BACKSPACE] * 4, "s", "t", "o", "r", "e", ENTER, ENTER, ENTER, "y")
+
+        self.assertEqual(self.run_cli("init", str(self.root / "shop"), keys=keys), 0)
+
+        summary = keys.last("Summary")
+        self.assertEqual(summary.question, "Rename it?")
+        self.assertIn(
+            'This folder is linked already, as "shop": this renames that project to "store".', summary.body
+        )
+        self.assertIn('Renamed "shop" to "store".', self.printed)
+
     def test_renaming_a_project_whose_server_runs_says_the_old_server_holds_the_folder(self):
         configuration = self.configure(shop=("server",))
         agents.apply(configuration, self.mac, lambda line: None)
