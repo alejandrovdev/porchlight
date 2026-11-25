@@ -153,6 +153,28 @@ class Tmux(unittest.TestCase):
         self.assertEqual(words[words.index("-c") + 1], "/srv/shop/w")
         self.assertEqual(shlex.split(words[-1]), ["/bin/zsh", "-lic", "exec claude --remote-control"])
 
+    def test_an_ordinary_folder_reaches_tmux_as_it_is(self):
+        words = self.tmux().new_session("shop-aaaaaaaa", "/srv/shop/w", "exec claude --remote-control")
+
+        self.assertEqual(
+            words,
+            ["/tools/tmux", "-L", "porchlight-test", "-f", "/package/tmux.conf", "-u", "new-session", "-d",
+             "-s", "shop-aaaaaaaa", "-x", "200", "-y", "50", "-c", "/srv/shop/w",
+             "/bin/zsh -lic 'exec claude --remote-control'"],
+        )  # fmt: skip
+
+    def test_a_folder_with_a_hash_reaches_tmux_literally(self):
+        # tmux reads -c as a format: #S, #{...} and #(...) would be replaced, and the session
+        # would start in another folder. ## is how a format says #.
+        for folder, given in (
+            ("/srv/shop/w#S", "/srv/shop/w##S"),
+            ("/srv/shop/w#(touch x)", "/srv/shop/w##(touch x)"),
+            ("/srv/#{session_name}/##", "/srv/##{session_name}/####"),
+        ):
+            words = self.tmux().new_session("shop-aaaaaaaa", folder, "exec claude")
+
+            self.assertEqual(words[words.index("-c") + 1], given, folder)
+
     def test_every_command_goes_to_its_own_server_with_a_clean_environment(self):
         runner = standins.Runner()
         environ = {"HOME": "/home/x", "LANG": "C", "CLAUDE_CODE_SESSION": "leaks", "PATH": "/somewhere"}
@@ -189,6 +211,15 @@ class Tmux(unittest.TestCase):
 
         self.assertEqual(attach, "/tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'")
         self.assertEqual(self.tmux().attach_command("shop-aaaaaaaa"), "exec " + attach)
+
+    def test_the_attach_command_quotes_any_session_name(self):
+        for name in ("shop's session", "shop $(touch x)", "shop;ls", "shop `id`"):
+            attach = self.tmux().attach(name)
+
+            self.assertEqual(
+                shlex.split(attach), ["/tools/tmux", "-L", "porchlight-test", "-u", "attach-session", "-t", "=" + name], name
+            )
+            self.assertTrue(attach.endswith(shlex.quote("=" + name)), "zsh never sees a word that starts with =")
 
     def test_a_shown_session_ends_with_its_tab(self):
         runner = standins.Runner()

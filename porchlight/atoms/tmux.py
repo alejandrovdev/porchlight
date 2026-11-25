@@ -51,17 +51,23 @@ class Tmux:
 
     def new_session(self, name, directory, command):
         """What starts a session nobody sees: a command in a detached session, run by a
-        login shell because a background service has next to no environment."""
+        login shell because a background service has next to no environment.
+
+        tmux reads the folder as a format, where #S, #{...} and #(...) stand for something
+        else: each # is doubled, which a format reads as one #."""
         return self.words(
-            "-u", "new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", str(directory),
+            "-u", "new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", str(directory).replace("#", "##"),
             "%s -lic %s" % (SHELL, shlex.quote(command)),
         )  # fmt: skip
 
     def attach(self, name):
         """What shows a session in a terminal: a tmux client on that session and no other."""
-        # Quoted by hand: zsh takes a word that starts with = for a command to look up,
-        # and shlex.quote leaves such a word as it is.
-        return "%s -L %s -u attach-session -t '=%s'" % (shlex.quote(self.tool), shlex.quote(self.server), name)
+        # zsh takes a word that starts with = for a command to look up, and shlex.quote
+        # leaves a word of safe characters as it is: such a word is put in quotes by hand.
+        target = shlex.quote("=" + name)
+        if not target.startswith("'"):
+            target = "'%s'" % target
+        return "%s -L %s -u attach-session -t %s" % (shlex.quote(self.tool), shlex.quote(self.server), target)
 
     def attach_command(self, name):
         """What a tab runs to show a session: the tab closes when the client ends."""
