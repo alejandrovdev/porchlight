@@ -428,7 +428,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 | `status` | | Print the sessions of every project. |
 | `reopen [name]` | `--project <name>` | Open a closed session again, back online in the app. Without a name, list the closed ones. |
 | `retry` | `--project <name>` | After a free session failed to start, clear the wait before the next try, for every project with `ready-session` or the one named. The service tries at its next pass, within 20 seconds. |
-| `doctor` | | Check this Mac (Claude Code signed in, the login agents loaded) and what each project needs on it, and say what to do about what is missing. |
+| `doctor` | | Check this Mac (Claude Code signed in and recent enough, the login agents loaded) and what each project needs on it, and say what to do about what is missing. |
 | `view <project> <session>` | | Follow a session the server started (`cse_...`), read-only. What a `live-view` tab runs. |
 | `resume-list [sync]` | | List the `/resume` copies of the server's sessions, with the command that resumes each. `sync` brings them up to date first. |
 | `apply` | `--servers` | Make the background agents match the configuration. A server that runs is left as it is. |

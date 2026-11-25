@@ -11,8 +11,10 @@ porchlight status
 ```
 
 `doctor` first checks this Mac: whether Claude Code is signed in (it asks
-`claude auth status`, reads only whether someone is, and prints no account detail) and,
-once a project is configured, whether the service's login agent is loaded. Then it checks,
+`claude auth status`, reads only whether someone is, and prints no account detail), its
+version (`claude --version`: a `problem` below 2.1.92, which lacks options porchlight
+uses; `ok` from there, with 2.1.327 or later recommended) and, once a project is
+configured, whether the service's login agent is loaded. Then it checks,
 for each project, only what its features need: the folder, Claude Code, git, tmux, the
 terminal, the git repository, the base branch, the permission mode and, with `server`,
 whether the server's login agent is loaded. An agent that is not loaded is fixed with
@@ -23,6 +25,7 @@ code is 1 when something is `missing` or a `problem`.
 ```text
 This Mac
   ok       Claude Code sign-in
+  ok       Claude Code version 2.1.327
   ok       service agent io.github.alejandrovdev.porchlight
 
 shop
