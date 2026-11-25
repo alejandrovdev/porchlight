@@ -336,6 +336,15 @@ class Apply(OnTheMac):
         self.assertEqual(self.definition(SHOP)["ProgramArguments"][-2:], ["--permission-mode", "acceptEdits"])
         self.assertEqual(self.printed[1], SHOP + ": restarted with its new definition")
 
+    def test_the_agent_file_of_a_server_left_running_keeps_its_old_mode_through_stop_and_start(self):
+        self.apply(self.both)
+        self.apply(self.moded(self.both, shop="acceptEdits"))  # left running as it is
+
+        agents.stop(self.mac, self.printed.append, servers=True)
+        agents.start(self.mac, self.printed.append)
+
+        self.assertEqual(self.mac.launchctl.definitions[SHOP]["ProgramArguments"][-2:], ["--permission-mode", "plan"])
+
     def test_a_server_loaded_from_a_file_without_its_permission_mode_is_the_tools_and_counts_as_changed(self):
         self.apply(self.both)
         earlier = self.definition(SHOP)

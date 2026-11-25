@@ -447,6 +447,19 @@ class Server(CommandLine):
              "Running in \"plan\". To bring the agent up to date: porchlight apply --servers"],
         )
 
+    def test_started_from_an_agent_written_for_an_older_mode_installs_the_configurations(self):
+        (shop,) = self.configure(shop=("server",))
+        settings = self.mac.settings(shop)
+        session_settings.stage(standins.project("shop", mode="manual"), settings)  # its last start
+        session_settings.stage(shop, settings)  # the new mode waits beside it
+
+        self.assertEqual(self.become("shop", "--permission-mode", "manual"), 0)
+
+        words = self.execve.call_args.args[1]
+        self.assertEqual(words[words.index("--permission-mode") + 1], "plan")
+        self.assertEqual(json.loads(settings.read_text())["permissions"]["defaultMode"], "plan")
+        self.assertFalse(session_settings.waiting(settings).exists())
+
     def test_says_nothing_when_its_agent_names_the_projects_mode(self):
         self.configure(shop=("server",))
 
