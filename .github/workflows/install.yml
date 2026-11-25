@@ -1,0 +1,56 @@
+name: install
+
+# Installs porchlight from its Homebrew tap on a clean Mac, as a new user would, and checks
+# that the tap serves the latest release. Run it after each release (once the tap is
+# updated) with `gh workflow run install.yml`; it also runs every Monday.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    name: brew install on a clean Mac
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+    steps:
+      - name: Install from the tap
+        run: brew install alejandrovdev/porchlight/porchlight
+      - name: The tap serves the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          installed=$(porchlight --version)
+          echo "latest: $latest, installed: $installed"
+          test "$installed" = "porchlight ${latest#v}"
+      - name: The formula's own test
+        run: brew test alejandrovdev/porchlight/porchlight
+      - name: Every command answers --help
+        run: |
+          for command in setup init deinit apply status doctor reopen retry view resume-list start stop uninstall; do
+            porchlight "$command" --help > /dev/null
+          done
+      - name: Doctor on a Mac without Claude Code
+        run: porchlight doctor || test $? -eq 1
+      - name: Setup in scratch folders
+        run: |
+          scratch=$(mktemp -d)
+          export PORCHLIGHT_CONFIG="$scratch/config.toml" PORCHLIGHT_STATE_DIR="$scratch/state" \
+            PORCHLIGHT_LOG_DIR="$scratch/logs" PORCHLIGHT_LAUNCH_AGENTS_DIR="$scratch/agents" \
+            PORCHLIGHT_LABEL=test.porchlight.ci PORCHLIGHT_TMUX_SERVER=porchlight-ci
+          porchlight setup --terminal none --permission-mode plan --preset recommended --yes
+          test -f "$scratch/config.toml"
+          porchlight status
+          porchlight uninstall --purge
+          test ! -e "$scratch/config.toml"
+      - name: Uninstall
+        run: |
+          brew uninstall porchlight
+          brew untap alejandrovdev/porchlight
