@@ -1,7 +1,8 @@
 """One pass: what the service runs when something changed and every few seconds.
 
     run(configuration, mac)        every project of the configuration, one after another
-    run_project(project, mac)      the tabs of server sessions, the ready sessions, the copies
+    run_project(project, mac)      the tabs of server sessions, the ready sessions, the copies,
+                                   the worktrees of the server's sessions that ended
     watched(configuration, mac)    the files and folders whose change calls for a pass
     status(configuration, mac)     print the sessions of every project, under its name
     project_status(project, mac)   print one project's sessions, of the kinds it has
@@ -16,12 +17,13 @@ of a project beyond what its features need: no terminal, no tmux and no server.
 """
 
 from . import config, names
-from .features import ready_sessions, resume_list, view_tabs
+from .features import ready_sessions, resume_list, server, view_tabs
 
 STEPS = (
     ("view tabs", view_tabs.reconcile),
     ("ready sessions", ready_sessions.reconcile),
     ("resume list", resume_list.sync),
+    ("server worktrees", server.tidy_worktrees),
 )
 
 

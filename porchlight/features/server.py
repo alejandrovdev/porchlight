@@ -2,7 +2,9 @@
 archive sessions on the Mac. Each session gets its own git worktree and runs with the
 user's own Claude Code configuration.
 
-    run(project, mac)   become the server (what a background service runs)
+    run(project, mac)              become the server (what a background service runs)
+    tidy_worktrees(project, mac)   remove the worktrees of its sessions that ended, when
+                                   nothing in them would be lost; prints nothing
 
 The server's sessions have no terminal and the app cannot start one again once it is
 archived: `view_tabs` shows each in a read-only tab and `resume_list` keeps a copy that
@@ -13,12 +15,29 @@ one. And never change the settings file while the server runs (see `session_sett
 a change waits and `run` installs it the next time the server starts.
 
 Keeping the Mac awake is not the server's: see `keep_awake`.
+
+The server leaves a session's worktree, `.claude/worktrees/bridge-<session>`, behind when
+the session ends. A pass removes it by the rule of a ready session's worktree
+(`ready_sessions.tidy_worktree`): only once no process runs its session and the worktree
+and its transcript have been quiet for a while, only when git lists it as a worktree of the
+repository, and only when it is clean and its HEAD is on the base branch; otherwise it is
+left, unlocked, and the project's log says why. Its branch is the server's and stays. Each
+worktree is checked once after its session ends, and again only when something in it or in
+the repository's branches changed. A folder of another name, a link, and anything unclear
+(a git error) are left alone.
 """
 
 import os
+import re
+from pathlib import Path
 
 from .. import names, session_settings
-from ..atoms import tools
+from ..atoms import tools, transcripts, worktrees
+from . import live_view, ready_sessions
+
+WORKTREES = "server-worktrees"  # the state: each worktree checked, and how it looked then
+QUIET = 600  # seconds a worktree and its transcript stay unchanged before its session counts as ended
+BRIDGE = re.compile(re.escape(worktrees.SERVER_PREFIX) + live_view.SESSION.pattern)
 
 
 def command(project, claude, settings):
@@ -50,3 +69,118 @@ def run(project, mac, execute=None, chdir=None):
     session_settings.install_pending(settings)  # no server runs yet: what waited goes in now
     (chdir or os.chdir)(names.repository(project))
     (execute or os.execve)(claude, command(project, claude, settings), environment(mac.environ))
+
+
+def bridge_folders(repository):
+    """The folders the server made for its sessions: {name: path}. Never a link."""
+    found = {}
+    for path in worktrees.folder(repository).glob(worktrees.SERVER_PREFIX + "*"):
+        if BRIDGE.fullmatch(path.name) and not path.is_symlink() and path.is_dir():
+            found[path.name] = path
+    return found
+
+
+def quiet(path, mac):
+    """Whether a worktree was made, and its session's transcript last written, QUIET seconds
+    ago or more: a session that is starting has its worktree before its process shows."""
+    try:
+        times = [path.stat().st_birthtime]
+        for transcript in transcripts.folder(mac.transcripts, path).glob("*.jsonl"):
+            times.append(transcript.stat().st_mtime)
+    except (OSError, AttributeError):
+        return False
+    return mac.clock() - max(times) >= QUIET
+
+
+def admin_folder(path):
+    """The folder where git keeps a worktree's HEAD and index, as its `.git` file names it;
+    None when it names none."""
+    try:
+        text = (path / ".git").read_text(encoding="utf8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not text.startswith("gitdir: "):
+        return None
+    return path / text[len("gitdir: ") :].strip()
+
+
+def stamps(paths):
+    """The time and size of each path, as JSON keeps them; None for one that is not there."""
+    seen = []
+    for path in paths:
+        try:
+            stat = path.stat()
+            seen.append([str(path), stat.st_mtime_ns, stat.st_size])
+        except OSError:
+            seen.append([str(path), None, None])
+    return seen
+
+
+def branches_look(repository):
+    """What a commit or a merge on any branch rewrites in the repository, git not asked:
+    `packed-refs`, the reference table, and each folder of `refs/heads` and `refs/remotes`."""
+    common = repository / ".git"
+    paths = [common / "packed-refs", common / "reftable"]
+    for top in (common / "refs" / "heads", common / "refs" / "remotes"):
+        paths.append(top)
+        for folder, children, _ in os.walk(top):
+            children.sort()
+            paths += [Path(folder) / child for child in children]
+    return stamps(paths)
+
+
+def worktree_look(path):
+    """What a change in a worktree rewrites: the folder itself (a file added or removed at
+    its top), and its HEAD and index (a commit, a checkout, a change staged or dropped)."""
+    admin = admin_folder(path)
+    return stamps([path] + ([] if admin is None else [admin / "HEAD", admin / "index"]))
+
+
+def listed_worktrees(mac, repository):
+    """The folders git lists as worktrees of the repository; None when git cannot tell."""
+    answer = mac.git(repository, "worktree", "list", "--porcelain")
+    if answer.returncode != 0:
+        return None
+    prefix = "worktree "
+    return {os.path.realpath(line[len(prefix) :]) for line in answer.stdout.splitlines() if line.startswith(prefix)}
+
+
+def tidy_worktrees(project, mac):
+    """Remove the worktrees of the server's sessions that ended, when nothing in them would
+    be lost; leave the others, saying why once. A project without `server` is not looked at."""
+    if not project.has("server"):
+        return
+    repository = names.repository(project)
+    found = bridge_folders(repository)
+    store = mac.store(project, WORKTREES)
+    if not found and not store.path.exists():
+        return
+    running = live_view.server_processes(mac.processes()) if found else {}
+    ended = [path for name, path in found.items() if name[len(worktrees.SERVER_PREFIX) :] not in running]
+    if not store.path.exists() and not any(quiet(path, mac) for path in ended):
+        return  # nothing to check yet: nothing is kept
+    with store.locked():
+        state = store.load({})
+        new = {name: state[name] for name in state if name in found}
+        branches = branches_look(repository) if found else []
+        due = []
+        for name, path in sorted(found.items()):
+            if name[len(worktrees.SERVER_PREFIX) :] in running:
+                new.pop(name, None)  # checked again once it ends
+            elif quiet(path, mac) and (new.get(name) or {}).get("looks") != worktree_look(path) + branches:
+                due.append((name, path))
+        listed = listed_worktrees(mac, repository) if due else None
+        for name, path in due if listed is not None else ():  # git could not tell: the next pass asks again
+            real = os.path.realpath(path)
+            if real not in listed or real == str(repository):
+                mac.log(project, "left %s: git does not list it as a worktree" % name)
+                outcome = "not listed"
+            else:
+                tidied = ready_sessions.tidy_worktree(project, path, mac)
+                outcome = "gone" if tidied is None else tidied[0]
+            if path.is_dir():
+                new[name] = {"outcome": outcome, "looks": worktree_look(path) + branches_look(repository)}
+            else:
+                new.pop(name, None)
+        if new != state:
+            store.save(new)

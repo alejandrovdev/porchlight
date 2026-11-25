@@ -3,7 +3,9 @@ project (`test_passes` has the pass over a whole configuration). Nothing is star
 program that would replace this one is a stand-in."""
 
 import json
+import shutil
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -112,8 +114,8 @@ class Pass(unittest.TestCase):
         self.assertEqual(self.ran, [("first", "shop"), ("second", "shop"), ("third", "shop")])
         self.assertIn("second failed: RuntimeError('broken')", self.mac.log_text(self.project))
 
-    def test_a_pass_keeps_the_tabs_then_the_ready_sessions_then_the_copies(self):
-        self.assertEqual([name for name, _ in passes.STEPS], ["view tabs", "ready sessions", "resume list"])
+    def test_a_pass_keeps_the_tabs_then_the_ready_sessions_then_the_copies_then_the_servers_worktrees(self):
+        self.assertEqual([name for name, _ in passes.STEPS], ["view tabs", "ready sessions", "resume list", "server worktrees"])
 
     def test_the_status_of_a_project_names_both_kinds_of_session(self):
         printed = []
@@ -140,6 +142,196 @@ class Pass(unittest.TestCase):
             printed, ["Ready sessions, with Claude Code's interface:", "  No session with Claude Code's interface yet."]
         )
 
+
+CLAUDE = "/usr/local/Caskroom/claude-code/2.1.325/claude"
+ENDED = "cse_01AAA"
+RUNNING = "cse_01BBB"
+
+
+def server_child(pid, session):
+    """A session the server runs, as the process list shows it."""
+    return (
+        f"{pid} {CLAUDE} --print --sdk-url wss://example.invalid/x --session-id {session} "
+        "--input-format stream-json --output-format stream-json\n"
+    )
+
+
+class BridgeWorktrees(unittest.TestCase):
+    """The worktrees the server leaves behind, `.claude/worktrees/bridge-cse_...`, tidied by
+    a pass once their session no longer runs, by the rule of a ready session's worktree."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        root = Path(self.scratch.name)
+        (root / "shop").mkdir()
+        self.project = standins.project("shop", str(root / "shop"), features=("server",))
+        self.repository = names.repository(self.project)
+        self.mac = standins.StandInMac(root)
+        self.mac.now = time.time() + 3600  # the folders below were made an hour ago
+        self.listed = None  # the folders git lists as worktrees; None: every bridge folder
+        self.status = ""  # what `git status --porcelain` prints in a worktree
+        self.on_base = True
+        self.mac.git_runner.answers = self.git
+
+    def tearDown(self):
+        self.scratch.cleanup()
+
+    def bridge(self, session=ENDED, name=None):
+        path = self.repository / ".claude" / "worktrees" / (name or "bridge-" + session)
+        path.mkdir(parents=True)
+        return path
+
+    def git(self, words):
+        asked = words[3:]
+        if asked[:2] == ["worktree", "list"]:
+            if self.listed is None:
+                folders = sorted((self.repository / ".claude" / "worktrees").glob("bridge-*"))
+            else:
+                folders = self.listed
+            blocks = ["worktree %s\nHEAD 1234\nbranch refs/heads/main\n" % self.repository]
+            blocks += ["worktree %s\nHEAD 1234\nbranch refs/heads/worktree-%s\n" % (f, f.name) for f in folders]
+            return standins.result(stdout="\n".join(blocks) + "\n")
+        if asked[:1] == ["symbolic-ref"]:
+            return standins.result(stdout="origin/main\n")
+        if asked[:1] == ["status"]:
+            return standins.result(stdout=self.status)
+        if asked[:1] == ["merge-base"]:
+            return standins.result(0 if self.on_base else 1)
+        if asked[:2] == ["branch", "--show-current"]:
+            return standins.result(stdout="worktree-%s\n" % Path(words[2]).name)
+        if asked[:2] == ["worktree", "remove"]:
+            shutil.rmtree(asked[2])
+        return None
+
+    def asked(self, *words):
+        return self.mac.git_runner.having(*words)
+
+    def tidy(self, times=1):
+        for _ in range(times):
+            passes.run_project(self.project, self.mac)
+
+    def test_an_ended_clean_worktree_on_the_base_is_removed(self):
+        worktree = self.bridge()
+
+        self.tidy()
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual([call[-1] for call in self.asked("worktree", "remove")], [str(worktree)])
+        self.assertEqual(self.asked("merge-base")[0][-3:], ["--is-ancestor", "HEAD", "origin/main"])
+        self.assertEqual(self.asked("branch", "-D"), [], "a branch porchlight did not make is never deleted")
+        self.assertIn("removed the worktree bridge-%s" % ENDED, self.mac.log_text(self.project))
+        self.assertEqual(self.mac.store(self.project, server.WORKTREES).load({}), {})
+
+    def test_an_ended_worktree_that_would_lose_something_is_unlocked_left_and_logged_once(self):
+        cases = (
+            (" M page.html\n", True, "it has changes"),
+            ("?? notes.txt\n", True, "it has changes"),
+            ("", False, "its commits are not on origin/main"),
+        )
+        for status, on_base, why in cases:
+            with self.subTest(why=why, status=status):
+                self.tearDown()  # each case in a repository of its own
+                self.setUp()
+                worktree = self.bridge()
+                self.status, self.on_base = status, on_base
+
+                self.tidy(times=3)
+
+                self.assertTrue(worktree.is_dir())
+                self.assertEqual(self.asked("worktree", "remove"), [])
+                self.assertEqual([call[-1] for call in self.asked("worktree", "unlock")], [str(worktree)])
+                line = "kept the worktree bridge-%s (%s)" % (ENDED, why)
+                self.assertEqual(self.mac.log_text(self.project).count(line), 1)
+                self.assertEqual(len(self.asked("status")), 1, "checked once, not at every pass")
+
+    def test_a_worktree_whose_session_runs_is_untouched(self):
+        worktree = self.bridge(RUNNING)
+        self.mac.ps = server_child(101, RUNNING)
+
+        self.tidy()
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(self.mac.git_runner.calls, [])
+
+    def test_a_worktree_just_made_is_untouched_while_its_session_starts(self):
+        worktree = self.bridge()
+        self.mac.now = time.time()
+
+        self.tidy()
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(self.mac.git_runner.calls, [])
+
+    def test_a_folder_git_does_not_list_as_a_worktree_is_untouched_and_logged_once(self):
+        worktree = self.bridge()
+        self.listed = []
+
+        self.tidy(times=3)
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(len(self.asked("worktree", "list")), 1)
+        self.assertEqual(len(self.mac.git_runner.calls), 1, "nothing but the list is asked")
+        line = "left bridge-%s: git does not list it as a worktree" % ENDED
+        self.assertEqual(self.mac.log_text(self.project).count(line), 1)
+
+    def test_folders_of_other_names_and_the_main_checkout_are_untouched(self):
+        others = [self.bridge(name=name) for name in ("feature-x", "bridge-other", "porchlight-shop-aaaaaaaa")]
+        link = self.repository / ".claude" / "worktrees" / ("bridge-" + ENDED)
+        link.symlink_to(self.repository)  # a link to the main checkout under a session's name
+
+        self.tidy()
+
+        self.assertTrue(all(folder.is_dir() for folder in others))
+        self.assertTrue(link.is_symlink() and self.repository.is_dir())
+        self.assertEqual(self.mac.git_runner.calls, [])
+
+    def test_a_git_error_leaves_everything_and_the_next_pass_tries_again(self):
+        worktree = self.bridge()
+        self.mac.git_runner.answers = lambda words: standins.result(128, stderr="fatal: not a git repository")
+
+        self.tidy(times=2)
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(len(self.asked("worktree", "list")), 2)
+        self.assertEqual(self.asked("status"), [])
+        self.assertEqual(self.asked("worktree", "remove"), [])
+
+    def test_a_project_without_the_server_is_untouched(self):
+        worktree = self.bridge()
+        self.project = standins.project("shop", self.project.path, features=("keep-awake",))
+
+        self.tidy()
+
+        self.assertTrue(worktree.is_dir())
+        self.assertEqual(self.mac.git_runner.calls, [])
+        self.assertFalse(self.mac.store(self.project, server.WORKTREES).path.exists())
+
+    def test_a_kept_worktree_is_checked_again_once_something_in_it_changed(self):
+        worktree = self.bridge()
+        self.status = "?? notes.txt\n"
+        self.tidy(times=2)
+        (worktree / "notes.txt").write_text("done\n")  # the user tidies it by hand: the folder changes
+        self.status = ""
+
+        self.tidy()
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual(len(self.asked("status")), 2)
+        self.assertEqual(self.mac.store(self.project, server.WORKTREES).load(None), {}, "nothing is kept of it")
+
+    def test_a_session_that_runs_again_is_checked_again_once_it_ends(self):
+        worktree = self.bridge()
+        self.status = "?? notes.txt\n"
+        self.tidy()
+        self.mac.ps = server_child(101, ENDED)
+        self.tidy()
+        self.mac.ps = ""
+        self.status = ""
+
+        self.tidy()
+
+        self.assertFalse(worktree.exists())
+        self.assertEqual(len(self.asked("status")), 2)
 
 if __name__ == "__main__":
     unittest.main()

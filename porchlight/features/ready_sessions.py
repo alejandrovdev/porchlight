@@ -358,12 +358,22 @@ def add_worktree(project, record, session, mac):
 
 def tidy(project, record, mac):
     """Remove the worktree of a session that ended when nothing in it would be lost."""
+    tidied = tidy_worktree(project, record["worktree"], mac)
+    if tidied is not None:
+        record["branch"] = tidied[1]
+
+
+def tidy_worktree(project, path, mac):
+    """Remove a worktree of the project's repository whose session ended, when nothing in it
+    would be lost: it is clean and its HEAD is on the base branch. Otherwise unlock it,
+    leave it and say why in the project's log. Its branch is deleted only when it was made
+    for a ready session. (what happened, its branch): "removed", "kept" or "failed"; None
+    when the folder is not there."""
     repository = names.repository(project)
-    path = record["worktree"]
     name = Path(path).name
     if not Path(path).is_dir():
-        return
-    record["branch"] = worktrees.current_branch(mac.git, path)
+        return None
+    branch = worktrees.current_branch(mac.git, path)
     clean = worktrees.is_clean(mac.git, path)
     base = base_branch(project, mac)
     merged = base is not None and worktrees.is_merged(mac.git, path, base)
@@ -374,14 +384,15 @@ def tidy(project, record, mac):
         else:
             why = "it has changes" if merged else "its commits are not on %s" % base
         mac.log(project, "kept the worktree %s (%s)" % (name, why))
-        return
+        return "kept", branch
     removed = worktrees.remove(mac.git, repository, path)
     if removed.returncode != 0:
         mac.log(project, "could not remove the worktree %s: %s" % (name, removed.stderr.strip()[:300]))
-        return
-    if names.owns_branch(project, record["branch"]):
-        worktrees.delete_branch(mac.git, repository, record["branch"])
+        return "failed", branch
+    if names.owns_branch(project, branch):
+        worktrees.delete_branch(mac.git, repository, branch)
     mac.log(project, "removed the worktree %s" % name)
+    return "removed", branch
 
 
 def stop(project, session, pid, mac, why="archived from the app"):
