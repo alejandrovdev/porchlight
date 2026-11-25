@@ -1,5 +1,5 @@
-"""What this Mac and each project need, checked: whether Claude Code is signed in and the
-login agents are loaded; then, for each project, the folder, the tools, the terminal, the
+"""What this Mac and each project need, checked: whether Claude Code is signed in and recent
+enough, and the login agents are loaded; then, for each project, the folder, the tools, the terminal, the
 base branch, the permission mode and its server's agent.
 
     checks(project, mac)         the checks of one project's features, in the order they are printed
@@ -14,7 +14,7 @@ tmux and no base branch, one without `tabs` no terminal. Nothing is changed and 
 started. The programs that run only answer: `claude --help`, to read the permission modes
 the installed Claude Code accepts; `claude auth status --json`, of which only whether
 someone is signed in is read (no account detail is printed or kept, and no credential is
-read); and launchctl, asked what is loaded.
+read); `claude --version`; and launchctl, asked what is loaded.
 """
 
 import json
@@ -44,6 +44,9 @@ MODE_OPTION = "--permission-mode"
 THIS_MAC = "This Mac"  # the heading of the checks that are no project's
 SIGN_IN = "Claude Code sign-in"
 SIGN_IN_ASKED = ("auth", "status", "--json")  # it exits 1 when no one is signed in
+VERSION = "Claude Code version"
+OLDEST = (2, 1, 92)  # the oldest Claude Code known to have every option porchlight uses
+RECOMMENDED = (2, 1, 327)  # it stops a server in worktree mode without deleting its sessions' ignored files
 
 
 @dataclass(frozen=True)
@@ -175,6 +178,35 @@ def sign_in_check(claude, mac):
     return Check(OK, SIGN_IN)
 
 
+def claude_version(text):
+    """The version `claude --version` prints first (`2.1.326 (Claude Code)`), as numbers to
+    compare; None when the answer is not one."""
+    found = re.match(r"(\d+)\.(\d+)\.(\d+)(?![\w.-])", (text or "").strip())
+    return tuple(int(number) for number in found.groups()) if found else None
+
+
+def dotted(version):
+    return ".".join(str(number) for number in version)
+
+
+def version_check(claude, mac):
+    """Whether the installed Claude Code is recent enough; unknown when it cannot say."""
+    version = claude_version(mac.output([claude, "--version"]))
+    if version is None:
+        return Check(UNKNOWN, VERSION, "`claude --version` could not say")
+    what = "%s %s" % (VERSION, dotted(version))
+    if version < OLDEST:
+        advice = (
+            "%s needs %s or later: update it with `brew upgrade --cask claude-code` if Homebrew installed it, "
+            "or with `claude update` if it is a native install" % (names.TOOL, dotted(OLDEST))
+        )
+        return Check(PROBLEM, what, advice)
+    if version < RECOMMENDED:
+        advice = "%s or later is recommended: it stops a server in worktree mode without deleting its sessions' ignored files"
+        return Check(OK, what, advice % dotted(RECOMMENDED))
+    return Check(OK, what)
+
+
 def known_agents(mac):
     """What the agents' folder and launchd say of this install's agents: (the definitions
     of those the tool wrote, by label; the labels of files it did not write; the labels
@@ -200,14 +232,16 @@ def agent_check(kind, label, known):
 
 
 def mac_checks(configuration, mac, known):
-    """What any project needs of this Mac: Claude Code signed in (when it is installed: when
-    it is not, the projects' checks say so) and, while there is a project, the service's
-    agent. `known()` gives what `known_agents` says."""
+    """What any project needs of this Mac: Claude Code signed in and recent enough (when it
+    is installed: when it is not, the projects' checks say so) and, while there is a
+    project, the service's agent. `known()` gives what `known_agents` says."""
     results = []
     try:
-        results.append(sign_in_check(mac.tool("claude"), mac))
+        claude = mac.tool("claude")
     except tools.ToolNotFound:
         pass
+    else:
+        results += [sign_in_check(claude, mac), version_check(claude, mac)]
     if configuration.projects:
         results.append(agent_check(agents.SERVICE, names.service_label(mac.environ), known()))
     return results

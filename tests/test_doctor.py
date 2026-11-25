@@ -1,6 +1,6 @@
 """Tests of the checks `doctor` runs: this Mac's, then what each project's features need on
-it. Git, the tools, the terminal, launchctl and what `claude --help` and `claude auth status`
-print are stand-ins: nothing is run."""
+it. Git, the tools, the terminal, launchctl and what `claude --help`, `claude auth status`
+and `claude --version` print are stand-ins: nothing is run."""
 
 import json
 import tempfile
@@ -35,6 +35,7 @@ SIGN_IN = ["/tools/claude", "auth", "status", "--json"]
 ACCOUNT = {"email": "someone@example.com", "orgName": "Example Org", "orgId": "org-0000", "planTier": "plan-x"}
 SIGNED_IN = json.dumps(dict(ACCOUNT, loggedIn=True, authMethod="claude.ai", apiProvider="firstParty"))
 SIGNED_OUT = json.dumps({"loggedIn": False, "authMethod": "none", "apiProvider": "firstParty"})
+VERSION = ["/tools/claude", "--version"]
 
 
 class PermissionModes(unittest.TestCase):
@@ -65,6 +66,7 @@ class Scratch(unittest.TestCase):
         self.mac.git_runner.answers = self.git
         self.mac.outputs["/tools/claude --help"] = HELP
         self.mac.outputs[" ".join(SIGN_IN)] = SIGNED_IN
+        self.mac.outputs[" ".join(VERSION)] = "2.1.327 (Claude Code)\n"  # as Claude Code prints it
         self.repositories = True
         self.default_branch = "origin/trunk"
         self.origin = True
@@ -310,19 +312,27 @@ class Report(Scratch):
         self.assertEqual(self.report(shop, blog), 0)
 
         self.assertEqual(
-            self.printed[:4],
-            ["This Mac", "  ok       Claude Code sign-in", "  ok       service agent %s" % standins.LABEL, ""],
+            self.printed[:5],
+            [
+                "This Mac",
+                "  ok       Claude Code sign-in",
+                "  ok       Claude Code version 2.1.327",
+                "  ok       service agent %s" % standins.LABEL,
+                "",
+            ],
         )
-        self.assertEqual(self.printed[4], "shop")
-        self.assertEqual(self.printed[5], "  ok       folder %s" % shop.directory)
-        self.assertEqual(self.printed[8], "  ok       tmux at /tools/tmux")
-        self.assertEqual(self.printed[12], '  ok       permission mode "plan"')
-        self.assertEqual(self.printed[13], "  ok       server agent %s.server.shop" % standins.LABEL)
-        self.assertEqual(self.printed[14:16], ["", "blog"])
-        self.assertTrue(all(line.startswith("  ok ") for line in self.printed[16:]))
+        self.assertEqual(self.printed[5], "shop")
+        self.assertEqual(self.printed[6], "  ok       folder %s" % shop.directory)
+        self.assertEqual(self.printed[9], "  ok       tmux at /tools/tmux")
+        self.assertEqual(self.printed[13], '  ok       permission mode "plan"')
+        self.assertEqual(self.printed[14], "  ok       server agent %s.server.shop" % standins.LABEL)
+        self.assertEqual(self.printed[15:17], ["", "blog"])
+        self.assertTrue(all(line.startswith("  ok ") for line in self.printed[17:]))
         self.assertEqual(self.printed[-1], "  ok       server agent %s.server.blog" % standins.LABEL)
-        self.assertEqual(len(self.printed), 22)
-        self.assertEqual(self.mac.asked, [SIGN_IN, ["/tools/claude", "--help"]], "claude is asked once for every project")
+        self.assertEqual(len(self.printed), 23)
+        self.assertEqual(
+            self.mac.asked, [SIGN_IN, VERSION, ["/tools/claude", "--help"]], "claude is asked once for every project"
+        )
         self.assertEqual(self.mac.launchctl.did(), [], "launchd is only asked")
 
     def test_exits_one_when_a_check_fails_and_says_what_to_do(self):
@@ -355,6 +365,7 @@ class Report(Scratch):
             [
                 "This Mac",
                 "  ok       Claude Code sign-in",
+                "  ok       Claude Code version 2.1.327",
                 "",
                 "No project is configured. Add one from its folder with: porchlight init",
             ],
@@ -419,7 +430,11 @@ class SignIn(Scratch):
         self.assertEqual(self.report(shop), 1)
 
         self.assertFalse([line for line in self.printed if "sign-in" in line])
-        self.assertEqual([line for line in self.printed if "Claude Code" in line], ["  missing  Claude Code (claude): " + doctor.INSTALL["claude"]])
+        self.assertEqual(
+            [line for line in self.printed if "Claude Code" in line],
+            ["  missing  Claude Code (claude): " + doctor.INSTALL["claude"]],
+            "no version line: the projects' checks already say it is missing",
+        )
         self.assertEqual(self.mac.asked, [])
 
     def test_an_answer_that_cannot_be_read_leaves_it_unknown_and_fails_nothing(self):
@@ -434,6 +449,110 @@ class SignIn(Scratch):
             self.assertEqual(
                 self.section("This Mac")[0], "  unknown  Claude Code sign-in: `claude auth status` could not say", answer
             )
+
+
+class ClaudeVersion(Scratch):
+    """The version `claude --version` prints, against the oldest one with every option
+    porchlight uses (2.1.92) and the one recommended (2.1.327)."""
+
+    def run_with(self, printed):
+        self.mac.outputs[" ".join(VERSION)] = printed
+        self.printed.clear()
+        shop = self.project()
+        self.install(shop)
+        code = self.report(shop)
+        return code, self.section("This Mac")
+
+    def test_the_recommended_version_or_a_later_one_is_ok_without_advice(self):
+        for printed, said in (
+            ("2.1.327 (Claude Code)\n", "2.1.327"),
+            ("2.1.1000 (Claude Code)\n", "2.1.1000"),  # a number, not text: 1000 comes after 327
+            ("2.2.0 (Claude Code)\n", "2.2.0"),
+            ("3.0.0\n", "3.0.0"),
+        ):
+            code, lines = self.run_with(printed)
+
+            self.assertEqual(code, 0, printed)
+            self.assertEqual(
+                lines,
+                [
+                    "  ok       Claude Code sign-in",
+                    "  ok       Claude Code version %s" % said,
+                    "  ok       service agent %s" % standins.LABEL,
+                ],
+                printed,
+            )
+        self.assertIn(VERSION, self.mac.asked)
+
+    def test_from_the_oldest_supported_to_below_the_recommended_one_is_ok_and_recommends_it(self):
+        for printed, said in (
+            ("2.1.92 (Claude Code)\n", "2.1.92"),
+            ("2.1.326 (Claude Code)\n", "2.1.326"),
+            ("2.1.100 (Claude Code)\n", "2.1.100"),  # a number, not text: 100 comes after 92
+        ):
+            code, lines = self.run_with(printed)
+
+            self.assertEqual(code, 0, printed)
+            self.assertEqual(
+                lines[1],
+                "  ok       Claude Code version %s: 2.1.327 or later is recommended: it stops a server in "
+                "worktree mode without deleting its sessions' ignored files" % said,
+                printed,
+            )
+            self.assertEqual(len(lines), 3, "the rest is as before")
+
+    def test_older_than_the_oldest_supported_is_a_problem_that_says_both_ways_to_update(self):
+        for printed, said in (
+            ("2.1.91 (Claude Code)\n", "2.1.91"),
+            ("2.1.9 (Claude Code)\n", "2.1.9"),  # a number, not text: 9 comes before 92
+            ("2.0.999 (Claude Code)\n", "2.0.999"),
+            ("1.9.0\n", "1.9.0"),
+        ):
+            code, lines = self.run_with(printed)
+
+            self.assertEqual(code, 1, printed)
+            self.assertEqual(
+                lines[1],
+                "  problem  Claude Code version %s: porchlight needs 2.1.92 or later: update it with "
+                "`brew upgrade --cask claude-code` if Homebrew installed it, or with `claude update` "
+                "if it is a native install" % said,
+                printed,
+            )
+            self.assertTrue(all(line.startswith("  ok ") for line in self.section("shop")), "only the version failed")
+
+    def test_an_answer_that_cannot_be_read_leaves_it_unknown_and_fails_nothing(self):
+        for printed in (None, "", "\n", "Claude Code\n", "2.1\n", "v2.1.327\n", "2.1.327-beta\n", "2.1.x\n"):
+            code, lines = self.run_with(printed)
+
+            self.assertEqual(code, 0, printed)
+            self.assertEqual(lines[1], "  unknown  Claude Code version: `claude --version` could not say", printed)
+
+    def test_a_failing_claude_is_unknown_and_fails_nothing(self):
+        ran = []
+
+        def run(words, **options):
+            ran.append(list(words))
+            return standins.result(1, stdout="2.1.327 (Claude Code)\n")
+
+        def broken(words, **options):
+            raise OSError("cannot run")
+
+        for runner in (run, broken):
+            asked = self.mac.output
+            self.mac.output = lambda words, any_exit=False, runner=runner, asked=asked: (
+                processes.output(words, run=runner, any_exit=any_exit) if list(words) == VERSION else asked(words, any_exit)
+            )
+            self.printed.clear()
+            shop = self.project()
+            self.install(shop)
+
+            self.assertEqual(self.report(shop), 0)
+
+            self.assertEqual(
+                self.section("This Mac")[1], "  unknown  Claude Code version: `claude --version` could not say"
+            )
+            self.mac.output = asked
+        self.assertEqual(ran, [VERSION])
 
 
 class LoginAgents(Scratch):

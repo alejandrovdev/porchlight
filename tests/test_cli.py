@@ -370,8 +370,8 @@ class Doctor(CommandLine):
         self.assertEqual(self.run_cli("doctor"), 0)
 
         self.assertEqual(self.printed[0], "This Mac")
-        self.assertEqual(self.printed[3:5], ["", "shop"])
-        self.assertEqual(len(self.printed), 11)
+        self.assertEqual(self.printed[4:6], ["", "shop"])
+        self.assertEqual(len(self.printed), 12)
         headings = ("This Mac", "", "shop")
         self.assertTrue(
             all(line.startswith(("  ok ", "  unknown ")) for line in self.printed if line not in headings), self.printed
