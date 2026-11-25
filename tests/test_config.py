@@ -189,6 +189,15 @@ session_prefix = "shop"
         prefix = ONE + 'session_prefix = "Shop\\n"\n'
         self.assertEqual([key for key, _ in problems(prefix)], ["projects.shop.session_prefix"])
 
+    def test_a_base_that_git_would_take_for_an_option_is_refused(self):
+        for base in ("-x", "--upload-pack=touch x", "-"):
+            self.assertEqual(
+                problems(ONE + 'base = "%s"\n' % base), [("projects.shop.base", "must not start with -")], base
+            )
+
+    def test_a_base_with_a_hyphen_inside_is_kept(self):
+        self.assertEqual(config.parse(ONE + 'base = "origin/release-1.0"\n').projects[0].base, "origin/release-1.0")
+
     def test_text_that_is_not_toml_is_one_problem(self):
         found = problems("terminal = \n")
 

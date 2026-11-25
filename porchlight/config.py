@@ -213,6 +213,9 @@ def project_from(name, table, problems):
     mode = text_value(key, table, "permission_mode", problems, ONE_WORD, "must be one word", required=True)
     features = chosen_features(key, table, problems)
     base = text_value(key, table, "base", problems)
+    if base is not None and base.startswith("-"):
+        # git would take it for an option; no branch name starts with -.
+        problems.append((key + ".base", "must not start with -"))
     prefix = text_value(
         key, table, "session_prefix", problems, PREFIX, "has letters, digits and hyphens, at most 32"
     )
