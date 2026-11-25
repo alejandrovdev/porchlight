@@ -3,6 +3,7 @@ stand-in and the configuration a scratch file: no session starts and no tab open
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -10,8 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 import porchlight
-from porchlight import cli, config, names
-from porchlight.atoms import transcripts
+from porchlight import cli, config, names, service, session_settings
+from porchlight.atoms import state, transcripts
 from porchlight.features import ready_sessions, resume_list
 from tests import standins
 
@@ -99,15 +100,17 @@ class Basics(CommandLine):
         self.assertEqual(self.run_cli("--help", config_file=False), 0)
 
         text = "\n".join(self.printed)
-        for command in ("status", "reopen", "doctor", "view", "resume-list"):
+        listed = ("status", "reopen", "doctor", "view", "resume-list", "apply", "start", "stop", "uninstall", "run", "server")
+        for command in listed:
             self.assertIn("\n    %s " % command, text)
-        for later in ("run", "server", "apply", "start", "stop", "uninstall", "setup"):
-            self.assertNotIn("\n    %s " % later, text, "a command that does nothing yet is not listed")
+        self.assertNotIn("\n    setup ", text, "a command that does nothing yet is not listed")
 
     def test_a_configuration_that_does_not_parse_prints_each_problem_by_key_and_exits_one(self):
         self.file.write_text('terminal = "kitty"\n[projects.shop]\npermission_mode = "plan"\npreset = "minimal"\n')
 
-        for command in (["status"], ["doctor"], ["reopen"], ["resume-list"], ["view", "shop", LIVE]):
+        every = (["status"], ["doctor"], ["reopen"], ["resume-list"], ["view", "shop", LIVE])
+        every += (["apply"], ["apply", "--servers"], ["uninstall"], ["server", "shop"])
+        for command in every:
             self.printed.clear()
             self.assertEqual(self.run_cli(*command), 1, command)
             self.assertEqual(
@@ -338,6 +341,203 @@ class ResumeList(CommandLine):
         self.assertEqual(self.run_cli("resume-list", "frobnicate"), 2)
 
         self.assertIn("usage: porchlight resume-list", self.errors)
+
+
+SERVICE_LABEL = standins.LABEL
+SHOP = standins.LABEL + ".server.shop"
+CHECK = "Check with: porchlight status, porchlight doctor"
+
+
+class Run(CommandLine):
+    def test_once_makes_one_pass_over_the_configuration_and_exits(self):
+        (shop,) = self.configure(shop=("server",))
+        (self.root / "shop").rmdir()  # what a pass says in the project's log
+
+        self.assertEqual(self.run_cli("run", "--once"), 0)
+
+        self.assertIn("skipped: the folder %s is missing" % shop.directory, self.mac.log_text(shop))
+        self.assertEqual(self.printed, [])
+        self.assertEqual(self.mac.spawned, [], "one pass keeps no Mac awake")
+
+    def test_once_refuses_a_configuration_that_does_not_parse_in_dated_lines(self):
+        self.file.write_text('terminal = "kitty"\n')
+
+        self.assertEqual(self.run_cli("run", "--once"), 1)
+
+        self.assertEqual(len(self.printed), 2)
+        self.assertRegex(
+            self.printed[0], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d The configuration .* has problems:$"
+        )
+
+    def test_a_second_one_exits_one_saying_another_is_running(self):
+        self.configure(shop=("server",))
+        held = state.exclusive(names.service_lock(self.mac.environ))
+        self.addCleanup(held.close)
+
+        for words in (["run"], ["run", "--once"]):
+            self.printed.clear()
+            self.assertEqual(self.run_cli(*words), 1)
+            self.assertEqual(len(self.printed), 1)
+            self.assertTrue(
+                self.printed[0].endswith(" Another porchlight run is already running. Only one runs at a time.")
+            )
+
+    def test_serves_the_file_it_was_given_with_the_lock_of_this_install(self):
+        with mock.patch.object(service, "run", return_value=0) as run:
+            self.assertEqual(self.run_cli("run"), 0, "even before the file exists: the service waits for it")
+
+        (path, mac_for, say, lock), options = run.call_args
+        self.assertEqual(str(path), str(self.file))
+        self.assertEqual(lock, names.service_lock(self.mac.environ))
+        self.assertEqual(options, {"once": False})
+        self.assertIs(mac_for(config.Config()), self.mac)
+
+    def test_each_configuration_gets_a_mac_that_reads_the_file_the_service_reads(self):
+        with mock.patch.object(service, "run", return_value=0) as run, mock.patch.object(cli.Mac, "of") as of:
+            cli.main(["run", "--config", str(self.file)], out=self.printed.append)
+            run.call_args.args[1](config.Config("warp"))
+
+        of.assert_called_once_with(config.Config("warp"), config_file=str(self.file))
+
+
+class Server(CommandLine):
+    def become(self, *words):
+        """Run `server` with what would replace this process recorded instead."""
+        with mock.patch.object(os, "execve") as self.execve, mock.patch.object(os, "chdir") as self.chdir:
+            return self.run_cli("server", *words)
+
+    def test_installs_the_settings_that_waited_and_becomes_the_projects_server(self):
+        (shop,) = self.configure(shop=("server",))
+        settings = self.mac.settings(shop)
+        session_settings.stage(standins.project("shop", mode="acceptEdits"), settings)
+        session_settings.stage(shop, settings)
+
+        self.assertEqual(self.become("shop"), 0)
+
+        self.assertEqual(json.loads(settings.read_text())["permissions"]["defaultMode"], "plan")
+        self.assertFalse(session_settings.waiting(settings).exists())
+        self.chdir.assert_called_once_with(names.repository(shop))
+        program, words, environment = self.execve.call_args.args
+        self.assertEqual(program, "/tools/claude")
+        self.assertEqual(words[:4], ["/tools/claude", "remote-control", "--spawn", "worktree"])
+        self.assertEqual(words[words.index("--settings") + 1], str(settings))
+        self.assertEqual(self.mac.spawned, [], "keeping the Mac awake is the service's")
+
+    def test_refuses_a_project_the_configuration_does_not_have(self):
+        self.configure(shop=("server",))
+
+        self.assertEqual(self.become("blog"), 1)
+
+        self.assertEqual(self.printed, ['No project "blog" in the configuration. Its projects: shop'])
+        self.execve.assert_not_called()
+
+    def test_refuses_a_project_without_the_server(self):
+        (blog,) = self.configure(blog=("ready-session",))
+
+        self.assertEqual(self.become("blog"), 1)
+
+        self.assertEqual(self.printed, ['The project "blog" does not have the server feature: it has no server to run.'])
+        self.execve.assert_not_called()
+        self.assertFalse(self.mac.settings(blog).exists())
+
+    def test_needs_a_project(self):
+        self.assertEqual(self.become(), 2)
+
+
+class Agents(CommandLine):
+    def test_apply_makes_launchd_match_the_configuration(self):
+        self.configure(shop=("server",))
+
+        self.assertEqual(self.run_cli("apply"), 0)
+
+        self.assertEqual(self.mac.launchctl.did(), [("load", SERVICE_LABEL), ("load", SHOP)])
+        self.assertEqual(self.printed, [SERVICE_LABEL + ": loaded", SHOP + ": loaded", CHECK])
+
+    def test_apply_changes_nothing_for_a_configuration_that_does_not_parse(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+        files = sorted(path.name for path in (self.root / "agents").iterdir())
+        self.mac.launchctl.calls.clear()
+        self.printed.clear()
+        self.file.write_text('[projects.shop]\npermission_mode = "plan"\npreset = "minimal"\n')
+
+        self.assertEqual(self.run_cli("apply", "--servers"), 1)
+
+        self.assertEqual(self.printed, ["The configuration %s has problems:" % self.file, "projects.shop.path: missing"])
+        self.assertEqual(self.mac.launchctl.calls, [], "launchd was not even asked")
+        self.assertEqual(sorted(path.name for path in (self.root / "agents").iterdir()), files)
+
+    def test_apply_restarts_a_running_server_only_with_servers(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+        self.mac.found["tmux"] = "/elsewhere/bin/tmux"
+        self.mac.launchctl.calls.clear()
+
+        self.assertEqual(self.run_cli("apply"), 0)
+        self.assertNotIn(("unload", SHOP), self.mac.launchctl.did())
+        self.assertIn("porchlight apply --servers", self.printed[-2])
+
+        self.assertEqual(self.run_cli("apply", "--servers"), 0)
+        self.assertEqual(self.mac.launchctl.did()[-2:], [("unload", SHOP), ("load", SHOP)])
+
+    def test_stop_and_start_need_no_configuration_that_parses(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+        self.mac.launchctl.calls.clear()
+        self.printed.clear()
+        self.file.write_text("terminal = \n")
+
+        self.assertEqual(self.run_cli("stop"), 0)
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SERVICE_LABEL)])
+        self.assertEqual(self.printed[-1], "Sessions already running keep running. Start again with: porchlight start")
+
+        self.assertEqual(self.run_cli("start"), 0)
+        self.assertEqual(self.mac.launchctl.did()[-1], ("load", SERVICE_LABEL))
+
+    def test_stop_unloads_the_servers_only_with_servers(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+
+        self.assertEqual(self.run_cli("stop", "--servers"), 0)
+
+        self.assertEqual(self.mac.launchctl.loaded, set())
+
+    def test_start_without_any_agent_says_to_apply(self):
+        self.assertEqual(self.run_cli("start"), 1)
+
+        self.assertEqual(self.printed, ["No agent is installed. Install them with: porchlight apply"])
+
+    def test_uninstall_leaves_a_running_server_unless_told(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+
+        self.assertEqual(self.run_cli("uninstall"), 1)
+        self.assertEqual(self.mac.launchctl.loaded, {SHOP})
+
+        self.assertEqual(self.run_cli("uninstall", "--servers"), 0)
+        self.assertEqual(self.mac.launchctl.loaded, set())
+        self.assertTrue(self.file.exists(), "the configuration stays")
+
+    def test_uninstall_purge_removes_the_configuration_file_it_read(self):
+        self.configure(shop=("server",))
+        self.run_cli("apply")
+
+        self.assertEqual(self.run_cli("uninstall", "--servers", "--purge"), 0)
+
+        self.assertFalse(self.file.exists())
+        self.assertFalse((self.root / "state").exists())
+        self.assertEqual(self.printed[-1], "Removed the configuration, the state and the logs.")
+
+
+class OneConfigurationFile(CommandLine):
+    def test_the_mac_of_a_command_hands_out_the_file_the_command_read(self):
+        self.configure(shop=("server",))
+
+        with mock.patch.object(cli.Mac, "of", return_value=self.mac) as of:
+            code = cli.main(["status", "--config", str(self.file)], out=self.printed.append)
+
+        self.assertEqual(code, 0)
+        of.assert_called_once_with(self.configuration, config_file=str(self.file))
 
 
 if __name__ == "__main__":

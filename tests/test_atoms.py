@@ -316,8 +316,22 @@ class State(unittest.TestCase):
         with open(self.store.lock_path, "w") as other:
             fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
+    def test_a_lock_is_taken_by_one_and_refused_to_the_next_until_it_is_let_go(self):
+        path = Path(self.scratch.name) / "state" / "service.lock"
+
+        held = state.exclusive(path)
+        self.assertIsNotNone(held, "its folder is made")
+        self.assertIsNone(state.exclusive(path), "another holds it: no waiting")
+        held.close()
+        again = state.exclusive(path)
+        self.assertIsNotNone(again)
+        again.close()
+
 
 class Logs(unittest.TestCase):
+    def test_a_dated_line_starts_with_the_date_a_log_line_has(self):
+        self.assertRegex(logs.dated("started"), r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d started$")
+
     def test_appends_a_dated_line_and_never_fails(self):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / "logs" / "shop.log"

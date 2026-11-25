@@ -33,13 +33,13 @@ STYLE = {"user": "\033[1;36m", "assistant": "", "tool": "\033[2m", "note": "\033
 RESET = "\033[0m"
 
 
-def live_sessions(ps_text, worktrees_folder):
-    """The sessions the server is running, with a worktree in this folder: {session: pid}.
+def server_processes(ps_text):
+    """The sessions some server is running on this Mac: {session: pid}.
 
     Main sessions only, never a run a session starts (`claude -p`, `--print` with a model,
     `--bg`, `daemon-worker`): those have no server address or no session id of the server.
     """
-    live = {}
+    found = {}
     for pid, program, arguments in processes.rows(ps_text):
         if Path(program).name != "claude":
             continue
@@ -48,9 +48,18 @@ def live_sessions(ps_text, worktrees_folder):
         if "--session-id" not in arguments[:-1]:
             continue
         session = arguments[arguments.index("--session-id") + 1]
-        if SESSION.fullmatch(session) and (Path(worktrees_folder) / (worktrees.SERVER_PREFIX + session)).is_dir():
-            live[session] = pid
-    return live
+        if SESSION.fullmatch(session):
+            found[session] = pid
+    return found
+
+
+def live_sessions(ps_text, worktrees_folder):
+    """The sessions the server is running, with a worktree in this folder: {session: pid}."""
+    return {
+        session: pid
+        for session, pid in server_processes(ps_text).items()
+        if (Path(worktrees_folder) / (worktrees.SERVER_PREFIX + session)).is_dir()
+    }
 
 
 def command(project, session, porchlight):

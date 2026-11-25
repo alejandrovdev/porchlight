@@ -11,15 +11,14 @@ archived: `view_tabs` shows each in a read-only tab and `resume_list` keeps a co
 Never run two servers for the same repository at once: whatever starts `run` keeps it to
 one. And never change the settings file while the server runs (see `session_settings`):
 a change waits and `run` installs it the next time the server starts.
+
+Keeping the Mac awake is not the server's: see `keep_awake`.
 """
 
 import os
-import subprocess
 
 from .. import names, session_settings
 from ..atoms import tools
-
-CAFFEINATE = "/usr/bin/caffeinate"
 
 
 def command(project, claude, settings):
@@ -36,28 +35,17 @@ def command(project, claude, settings):
     ]
 
 
-def keep_awake_command(pid):
-    """Keep the Mac awake while a process runs, on AC power only (-s). The display still
-    sleeps, and on battery the Mac sleeps as usual. It ends when that process does."""
-    return [CAFFEINATE, "-s", "-w", str(pid)]
-
-
 def environment(environ):
     """The environment of the server and its sessions. A background service starts with
     a minimal PATH: Homebrew's folders come first, then whatever was there."""
     return dict(environ, PATH=tools.search_path(environ.get("PATH", "")))
 
 
-def run(project, mac, keep_awake=True, execute=os.execve, spawn=subprocess.Popen, chdir=os.chdir, pid=os.getpid):
+def run(project, mac, execute=None, chdir=None):
     """Start the server in the project's folder; this process becomes the server."""
     claude = mac.claude
     settings = mac.settings(project)
     session_settings.stage(project, settings)
     session_settings.install_pending(settings)  # no server runs yet: what waited goes in now
-    chdir(names.repository(project))
-    if keep_awake:
-        try:
-            spawn(keep_awake_command(pid()))
-        except OSError as error:
-            mac.log(project, "could not keep the Mac awake: %r" % (error,))
-    execute(claude, command(project, claude, settings), environment(mac.environ))
+    (chdir or os.chdir)(names.repository(project))
+    (execute or os.execve)(claude, command(project, claude, settings), environment(mac.environ))

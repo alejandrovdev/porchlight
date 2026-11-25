@@ -5,19 +5,27 @@
     doctor                     check what each project needs on this Mac
     view <project> <session>   follow a session the server started, read-only
     resume-list [sync]         the copies that /resume lists
+    apply [--servers]          make the background agents match the configuration
+    start, stop [--servers]    load the agents that are installed, unload the service
+    uninstall [--servers] [--purge]   remove the agents and let go of the free sessions
+    run [--once]               the service: keep the sessions of every project
+    server <project>           a project's server (what its background agent runs)
 
 Every command reads the configuration file (`--config <file>`, else the default one) and
 exits with 0 when it did what was asked, 1 when it refused or something needs attention,
-2 when the command line is wrong. This file only reads the command line and prints: what
-a command does is in the module it calls.
+2 when the command line is wrong. `run`, `start` and `stop` work with a file that does not
+parse: the service waits for it, and the other two only load and unload what is installed.
+This file only reads the command line and prints: what a command does is in the module it
+calls.
 """
 
 import argparse
 import sys
 
-from . import __version__, config, doctor, names, passes
-from .atoms import tools
+from . import __version__, agents, config, doctor, names, passes, service
+from .atoms import logs, tools
 from .features import live_view, ready_sessions, resume_list
+from .features import server as project_server
 from .mac import Mac
 
 
@@ -61,6 +69,50 @@ def copies(chosen, configuration, mac, out):
     return resume_list.report(configuration, mac, out, sync_first=chosen.action == "sync")
 
 
+def apply(chosen, configuration, mac, out):
+    return agents.apply(configuration, mac, out, servers=chosen.servers)
+
+
+def uninstall(chosen, configuration, mac, out):
+    return agents.uninstall(
+        configuration, mac, out, servers=chosen.servers, purge=chosen.purge, config_file=chosen.config_file
+    )
+
+
+def serve_project(chosen, configuration, mac, out):
+    project = project_named(configuration, chosen.project, out)
+    if project is None:
+        return 1
+    if not project.has("server"):
+        out('The project "%s" does not have the server feature: it has no server to run.' % project.name)
+        return 1
+    project_server.run(project, mac)  # this process is the server from here on
+    return 0
+
+
+# What follows needs no configuration that parses: (chosen, the file, the Mac or None, out).
+
+
+def start(chosen, path, mac, out):
+    return agents.start(mac or Mac(config_file=path), out)
+
+
+def stop(chosen, path, mac, out):
+    return agents.stop(mac or Mac(config_file=path), out, servers=chosen.servers)
+
+
+def run_service(chosen, path, mac, out):
+    def say(line):
+        out(logs.dated(line))
+        sys.stdout.flush()  # a log that is a file is read while the service runs
+
+    def mac_for(configuration):
+        return mac or Mac.of(configuration, config_file=path)
+
+    lock = names.service_lock(mac.environ if mac else None)
+    return service.run(path, mac_for, say, lock, once=chosen.once)
+
+
 def parser():
     # Every command takes --config, before or after its name; the one given last wins.
     common = argparse.ArgumentParser(add_help=False)
@@ -74,9 +126,13 @@ def parser():
     top.add_argument("--version", action="store_true", help="print the version and exit")
     commands = top.add_subparsers(dest="command", metavar="<command>")
 
-    def command(name, run, summary):
+    def command(name, run, summary, configured=True):
         added = commands.add_parser(name, parents=[common], help=summary, description=summary)
-        added.set_defaults(run=run)
+        added.set_defaults(run=run, configured=configured)
+        return added
+
+    def with_servers(added, what):
+        added.add_argument("--servers", action="store_true", help=what)
         return added
 
     command("status", status, "Print the sessions of every project.")
@@ -91,20 +147,58 @@ def parser():
     viewing.add_argument("session", type=server_session, help="the session's id, cse_...")
     listing = command("resume-list", copies, "List the copies of the server's sessions that /resume shows.")
     listing.add_argument("action", nargs="?", choices=("sync",), help="bring the copies up to date first")
+    with_servers(
+        command(
+            "apply",
+            apply,
+            "Make the background agents match the configuration. A server that runs is left as it is.",
+        ),
+        "also restart the running servers that changed and remove those no longer wanted; their sessions end",
+    )
+    command("start", start, "Load every installed agent that is not loaded.", configured=False)
+    with_servers(
+        command(
+            "stop",
+            stop,
+            "Unload the service until `start` or the next login. Sessions already running keep running.",
+            configured=False,
+        ),
+        "also unload the servers; the sessions they started end",
+    )
+    removing = with_servers(
+        command(
+            "uninstall",
+            uninstall,
+            "Remove the agents and end the free sessions. Sessions in use keep running; "
+            "the configuration, the state and the logs stay.",
+        ),
+        "also remove the servers that run; the sessions they started end",
+    )
+    removing.add_argument(
+        "--purge",
+        action="store_true",
+        help="also remove the configuration, the state and the logs; refused while a session still runs",
+    )
+    running = command(
+        "run",
+        run_service,
+        "The service: keep the sessions of every project until stopped. One at a time.",
+        configured=False,
+    )
+    running.add_argument("--once", action="store_true", help="make one pass and exit")
+    serving = command(
+        names.SERVER_AGENT, serve_project, "Become a project's server: what its background agent runs."
+    )
+    serving.add_argument("project", help="the project's name in the configuration")
     return top
 
 
 def load(path, out):
     """The configuration in a file; None, with what is wrong printed, when it cannot be used."""
-    try:
-        return config.load(path)
-    except config.ConfigError as error:
-        out("The configuration %s has problems:" % path)
-        for key, message in error.problems:
-            out("%s: %s" % (key, message) if key else message)
-    except (OSError, UnicodeDecodeError) as error:
-        out("The configuration %s cannot be read: %s" % (path, error))
-    return None
+    configuration, problems = service.read(path)
+    for line in problems:
+        out(line)
+    return configuration
 
 
 def main(arguments, mac=None, out=print):
@@ -122,11 +216,15 @@ def main(arguments, mac=None, out=print):
         sys.stderr.write("%s: error: name a command\n" % names.TOOL)
         return 2
     path = getattr(chosen, "config", None) or config.default_path()
+    if not chosen.configured:
+        return chosen.run(chosen, path, mac, out)
     configuration = load(path, out)
     if configuration is None:
         return 1
+    chosen.config_file = path
     try:
-        return chosen.run(chosen, configuration, mac or Mac.of(configuration), out)
+        # What the Mac hands to a tab, a session or an agent reads this very file.
+        return chosen.run(chosen, configuration, mac or Mac.of(configuration, config_file=path), out)
     except tools.ToolNotFound as error:
         out("%s. See what is missing with: %s" % (error, names.command("doctor")))
         return 1

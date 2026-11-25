@@ -6,8 +6,10 @@ in "<project>-<short id>" never belongs to two projects.
 
     state      ~/Library/Application Support/<tool>/projects/<project>/
     logs       ~/Library/Logs/<tool>/<project>.log
+    agents     <label>.plist and <label>.server.<project>.plist in ~/Library/LaunchAgents
     variables  <TOOL>_STATE_DIR, <TOOL>_LOG_DIR, <TOOL>_TRANSCRIPTS_DIR, <TOOL>_TMUX_SERVER,
-               <TOOL>_WARP_TAB_CONFIGS, and <TOOL>_CLAUDE, <TOOL>_TMUX, <TOOL>_GIT for a tool
+               <TOOL>_WARP_TAB_CONFIGS, <TOOL>_LABEL, <TOOL>_LAUNCH_AGENTS_DIR, <TOOL>_CONFIG,
+               and <TOOL>_CLAUDE, <TOOL>_TMUX, <TOOL>_GIT for a tool
 """
 
 import os
@@ -15,6 +17,8 @@ import re
 from pathlib import Path
 
 TOOL = "porchlight"
+LABEL = "io.github.alejandrovdev." + TOOL  # the address the tool is published at, reversed
+SERVER_AGENT = "server"  # what a label says between the tool's own and a project's name
 SHORT = 8  # how much of a session's id a name carries
 SERVER_SESSION = "cse_"  # how the id of a session the server starts begins
 
@@ -119,3 +123,74 @@ def copy_name(project, source_id, generation):
     """What the id of a copy for `/resume` is derived from."""
     name = "%s:%s:resume-copy:%s" % (TOOL, project.name, source_id)
     return name if generation <= 1 else "%s:%d" % (name, generation)
+
+
+def label_prefix(environ=None):
+    """How the label of every background agent starts. A variable replaces it, so that a
+    rehearsal's agents are never taken for those of the real install."""
+    return chosen("label", environ) or LABEL
+
+
+def service_label(environ=None):
+    """The agent that keeps the sessions of every project."""
+    return label_prefix(environ)
+
+
+def server_label(project_name, environ=None):
+    """The agent that runs one project's server."""
+    return "%s.%s.%s" % (label_prefix(environ), SERVER_AGENT, project_name)
+
+
+def served(label, environ=None):
+    """The project a label is the server of; None for any other label."""
+    start = "%s.%s." % (label_prefix(environ), SERVER_AGENT)
+    name = label[len(start) :] if label.startswith(start) else ""
+    return name if re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) else None
+
+
+def own_label(label, environ=None):
+    """Whether a label is one this install gives: the service's or a server's, and nothing
+    else that merely starts the same way."""
+    return label == service_label(environ) or served(label, environ) is not None
+
+
+def launch_agents(environ=None):
+    """The folder that keeps the agents' definitions."""
+    return Path(chosen("launch_agents_dir", environ) or Path.home() / "Library" / "LaunchAgents")
+
+
+def service_log(environ=None):
+    """What the service prints. A project's name has no dot, so this is no project's log."""
+    return log_root(environ) / "agent.service.log"
+
+
+def server_log(project, environ=None):
+    """What a project's server prints."""
+    return log_root(environ) / ("agent.%s.%s.log" % (SERVER_AGENT, project.name))
+
+
+def service_lock(environ=None):
+    """What the running service holds, so that there is only one."""
+    return state_root(environ) / "service.lock"
+
+
+def default_config():
+    """The configuration file of an install that moved nothing."""
+    return Path.home() / "Library" / "Application Support" / TOOL / "config.toml"
+
+
+def carried(environ=None, config_file=None):
+    """What a command the tool hands to someone else needs in its environment to read what
+    this process reads: every variable of the tool, and the configuration file in use when
+    it is not the default one. A tab, a session and a background agent start with none of
+    this process's environment."""
+    environ = os.environ if environ is None else environ
+    start = variable("")
+    found = {name: value for name, value in environ.items() if name.startswith(start) and value}
+    if config_file is not None:
+        file = os.path.abspath(config_file)
+        if Path(file) == default_config():
+            found.pop(variable("config"), None)
+        else:
+            found[variable("config")] = file
+    return found

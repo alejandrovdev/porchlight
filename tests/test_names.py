@@ -1,12 +1,14 @@
 """Tests of the names porchlight creates: all from its identifier and the project's name."""
 
 import itertools
+import os
 import re
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import porchlight
-from porchlight import names
+from porchlight import config, names
 from tests import standins
 
 A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -120,6 +122,90 @@ class Package(unittest.TestCase):
         ]
 
         self.assertEqual(naming, ["tools.py"])
+
+
+class Agents(unittest.TestCase):
+    """The names of the background agents, and what moves them for a rehearsal."""
+
+    def test_the_labels_start_with_the_tools_own_address_and_carry_the_projects_name(self):
+        self.assertEqual(names.service_label({}), "io.github.alejandrovdev.porchlight")
+        self.assertEqual(names.server_label("shop", {}), "io.github.alejandrovdev.porchlight.server.shop")
+
+    def test_a_variable_replaces_the_start_of_every_label(self):
+        environ = {"PORCHLIGHT_LABEL": "test.porchlight.scratch"}
+
+        self.assertEqual(names.service_label(environ), "test.porchlight.scratch")
+        self.assertEqual(names.server_label("shop", environ), "test.porchlight.scratch.server.shop")
+
+    def test_tells_which_project_a_label_is_the_server_of(self):
+        self.assertEqual(names.served("io.github.alejandrovdev.porchlight.server.my-shop", {}), "my-shop")
+        self.assertIsNone(names.served("io.github.alejandrovdev.porchlight", {}))
+        self.assertIsNone(names.served("io.github.alejandrovdev.porchlight.server.", {}))
+
+    def test_only_the_service_and_the_servers_of_one_prefix_are_the_tools_own(self):
+        own = ("io.github.alejandrovdev.porchlight", "io.github.alejandrovdev.porchlight.server.shop")
+        others = (
+            "io.github.alejandrovdev.porchlight.rehearsal",  # another install, whose labels start the same
+            "io.github.alejandrovdev.porchlight.rehearsal.server.shop",
+            "io.github.alejandrovdev.porchlightx",
+            "io.github.alejandrovdev.porchlight.server.Shop.backup",
+            "com.example.io.github.alejandrovdev.porchlight",
+            "test.porchlight.scratch",
+        )
+
+        self.assertEqual([label for label in own + others if names.own_label(label, {})], list(own))
+        self.assertTrue(names.own_label("test.porchlight.scratch", {"PORCHLIGHT_LABEL": "test.porchlight.scratch"}))
+        self.assertFalse(names.own_label(own[0], {"PORCHLIGHT_LABEL": "test.porchlight.scratch"}))
+
+    def test_the_agents_are_kept_where_a_persons_own_are_unless_a_variable_moves_them(self):
+        self.assertEqual(names.launch_agents({}), Path.home() / "Library" / "LaunchAgents")
+        self.assertEqual(names.launch_agents({"PORCHLIGHT_LAUNCH_AGENTS_DIR": "/scratch/agents"}), Path("/scratch/agents"))
+
+    def test_an_agents_log_is_no_projects_log(self):
+        service = standins.project("service")
+        logs = {
+            names.log_file(service, SCRATCH),
+            names.service_log(SCRATCH),
+            names.server_log(service, SCRATCH),
+            names.server_log(standins.project("server"), SCRATCH),
+        }
+
+        self.assertEqual(len(logs), 4)
+        self.assertEqual({log.parent for log in logs}, {Path("/scratch/logs")})
+
+    def test_the_lock_of_the_service_is_in_the_state_folder(self):
+        self.assertEqual(names.service_lock(SCRATCH), Path("/scratch/state/service.lock"))
+
+
+class Carried(unittest.TestCase):
+    """What a command the tool hands to someone else must carry to act as the tool that made it."""
+
+    def test_the_default_configuration_file_is_the_one_the_configuration_reads(self):
+        with mock.patch.dict("os.environ", clear=False) as environ:
+            environ.pop("PORCHLIGHT_CONFIG", None)
+
+            self.assertEqual(names.default_config(), config.default_path())
+
+    def test_an_install_that_moved_nothing_carries_nothing(self):
+        self.assertEqual(names.carried({"PATH": "/usr/bin", "HOME": "/home/someone"}), {})
+        self.assertEqual(names.carried({"PATH": "/usr/bin"}, names.default_config()), {})
+
+    def test_every_variable_of_the_tool_is_carried_and_no_other(self):
+        environ = dict(SCRATCH, PORCHLIGHT_TMUX_SERVER="porchlight-test", PATH="/usr/bin", PORCHLIGHTS="no")
+
+        self.assertEqual(names.carried(environ), dict(SCRATCH, PORCHLIGHT_TMUX_SERVER="porchlight-test"))
+
+    def test_a_configuration_file_that_is_not_the_default_one_is_carried_whole(self):
+        carried = names.carried(SCRATCH, "scratch/config.toml")
+
+        self.assertEqual(carried, dict(SCRATCH, PORCHLIGHT_CONFIG=os.path.abspath("scratch/config.toml")))
+
+    def test_the_file_in_use_wins_over_the_one_the_environment_names(self):
+        environ = {"PORCHLIGHT_CONFIG": "/scratch/other.toml"}
+
+        self.assertEqual(names.carried(environ, "/scratch/config.toml"), {"PORCHLIGHT_CONFIG": "/scratch/config.toml"})
+        self.assertEqual(names.carried(environ, names.default_config()), {})
+        self.assertEqual(names.carried(environ), environ, "no file was named: the environment's own stands")
 
 
 if __name__ == "__main__":

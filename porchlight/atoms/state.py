@@ -37,3 +37,17 @@ class Store:
         draft = self.path.with_suffix(".writing")
         draft.write_text(json.dumps(table, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf8")
         os.replace(draft, self.path)
+
+
+def exclusive(path):
+    """Take a lock for as long as the file returned stays open; None when another process
+    holds it. Nobody waits: this is how only one of something runs at a time."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = open(path, "a")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        return None
+    return lock

@@ -39,6 +39,7 @@ a session is told nothing about reopening and `reopen` refuses.
 """
 
 import calendar
+import dataclasses
 import json
 import re
 import shlex
@@ -474,6 +475,18 @@ def save_state(store, state):
     store.save(state)
 
 
+def watched(project, mac):
+    """What tells at once that a session of this project needs a pass: the transcript of
+    each session that waits or is in use, where its first prompt and the app's archive
+    are written, and the folder that transcript appears in."""
+    paths = []
+    for session, record in sorted(load_state(mac.store(project, STATE))["sessions"].items()):
+        if record["state"] in ("free", "used"):
+            file = transcript(session, record, mac)
+            paths += [file, file.parent]
+    return paths
+
+
 def reconcile(project, mac):
     ready, tabs = project.has("ready-session"), project.has("tabs")
     store = mac.store(project, STATE)
@@ -517,6 +530,21 @@ def reconcile(project, mac):
             if not actions:
                 break
             mac.sleep(2)
+
+
+def free(store):
+    return {session for session, record in load_state(store)["sessions"].items() if record["state"] == "free"}
+
+
+def let_go(project, mac):
+    """End the free session a project holds, the way turning the feature off does, and
+    prepare or show no other: (how many it let go of, how many did not end)."""
+    store = mac.store(project, STATE)
+    before = free(store)
+    kept = tuple(feature for feature in project.features if feature not in ("ready-session", "tabs"))
+    reconcile(dataclasses.replace(project, features=kept), mac)
+    left = free(store) & before
+    return len(before - left), len(left)
 
 
 def status(project, mac, out=print):

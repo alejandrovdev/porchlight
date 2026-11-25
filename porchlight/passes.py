@@ -1,7 +1,8 @@
-"""One pass: what runs every few seconds and when a worktree appears or goes.
+"""One pass: what the service runs when something changed and every few seconds.
 
     run(configuration, mac)        every project of the configuration, one after another
     run_project(project, mac)      the tabs of server sessions, the ready sessions, the copies
+    watched(configuration, mac)    the files and folders whose change calls for a pass
     status(configuration, mac)     print the sessions of every project, under its name
     project_status(project, mac)   print one project's sessions, of the kinds it has
 
@@ -40,6 +41,19 @@ def run(configuration, mac, steps=STEPS):
             run_project(project, mac, steps)
         except Exception as error:  # one project never stops the others
             mac.log(project, "the pass failed: %r" % (error,))
+
+
+def watched(configuration, mac):
+    """What to watch so that a pass comes as soon as it is needed, not at the next interval:
+    the folder where a new session's transcripts appear, and what each project's sessions
+    write. The process list cannot be watched: that is what the interval is for."""
+    paths = [mac.transcripts]
+    for project in configuration.projects:
+        try:
+            paths += ready_sessions.watched(project, mac)
+        except Exception as error:  # one project never hides the others
+            mac.log(project, "what to watch could not be read: %r" % (error,))
+    return paths
 
 
 def project_status(project, mac, out=print):

@@ -54,3 +54,13 @@ def install_pending(path):
     except OSError:
         return False
     return True
+
+
+def bring_up_to_date(project, path):
+    """Make a file that exists say what the project asks, at once; True when it changed.
+    Only for when no server runs. A project that has no file yet gets none: its first
+    session writes it."""
+    if not Path(path).exists():
+        return False
+    stage(project, path)
+    return install_pending(path)

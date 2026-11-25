@@ -28,12 +28,17 @@ def ends_with(path, message):
     return tail.endswith(wanted) and STAMPED.search(tail[: -len(wanted)]) is not None
 
 
+def dated(message):
+    """A message as a line of a log: after the date and the time."""
+    return time.strftime(STAMP) + message
+
+
 def write(path, message):
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         if ends_with(path, message):
             return
         with open(path, "a", encoding="utf8") as handle:
-            handle.write(time.strftime(STAMP) + message + "\n")
+            handle.write(dated(message) + "\n")
     except OSError:
         pass

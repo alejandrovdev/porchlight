@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from porchlight import names, passes, session_settings
 from porchlight.features import server
@@ -30,9 +31,7 @@ class Server(unittest.TestCase):
             self.project,
             self.mac,
             execute=lambda program, words, environment: self.done.append(("exec", program, words, environment)),
-            spawn=lambda words: self.done.append(("spawn", words)),
             chdir=lambda folder: self.done.append(("cd", str(folder))),
-            pid=lambda: 4242,
             **options,
         )
 
@@ -49,9 +48,9 @@ class Server(unittest.TestCase):
         self.run_server()
 
         settings = self.mac.settings(self.project)
-        self.assertEqual([step[0] for step in self.done], ["cd", "spawn", "exec"])
+        self.assertEqual([step[0] for step in self.done], ["cd", "exec"])
         self.assertEqual(self.done[0][1], str(names.repository(self.project)))
-        self.assertEqual(self.done[2][1:3], ("/tools/claude", server.command(self.project, "/tools/claude", settings)))
+        self.assertEqual(self.done[1][1:3], ("/tools/claude", server.command(self.project, "/tools/claude", settings)))
         self.assertEqual(json.loads(settings.read_text())["permissions"]["defaultMode"], "plan")
 
     def test_its_sessions_find_homebrew_whatever_started_it(self):
@@ -62,15 +61,20 @@ class Server(unittest.TestCase):
         self.assertIn("/usr/bin", folders)
         self.assertEqual(folders[-1], "/custom/bin")
 
-    def test_keeps_the_mac_awake_on_ac_power_for_as_long_as_it_runs(self):
+    def test_starts_nothing_beside_the_server_whatever_the_projects_features(self):
+        self.assertTrue(self.project.has("keep-awake"), "keeping the Mac awake is the service's, not the server's")
+
         self.run_server()
 
-        self.assertEqual(self.done[1], ("spawn", ["/usr/bin/caffeinate", "-s", "-w", "4242"]))
-
-    def test_does_not_keep_the_mac_awake_when_told_not_to(self):
-        self.run_server(keep_awake=False)
-
         self.assertEqual([step[0] for step in self.done], ["cd", "exec"])
+        self.assertEqual(self.mac.spawned, [])
+
+    def test_what_replaces_this_process_is_looked_for_when_the_server_starts(self):
+        with mock.patch.object(server.os, "execve") as execve, mock.patch.object(server.os, "chdir") as chdir:
+            server.run(self.project, self.mac)
+
+        chdir.assert_called_once_with(names.repository(self.project))
+        self.assertEqual(execve.call_args.args[0], "/tools/claude")
 
     def test_installs_the_settings_that_waited_for_a_restart(self):
         settings = self.mac.settings(self.project)

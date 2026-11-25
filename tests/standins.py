@@ -4,14 +4,16 @@ No test starts a program, opens a tab or signals a process: everything a feature
 of the Mac goes to one of these, which records it and answers what the test told it to.
 """
 
+import plistlib
 from pathlib import Path
 from types import SimpleNamespace
 
-from porchlight import config
-from porchlight.atoms import terminal, tmux, tools, worktrees
+from porchlight import config, names
+from porchlight.atoms import launchd, terminal, tmux, tools, worktrees
 from porchlight.mac import Mac
 
 TMUX_SERVER = "porchlight-test"
+LABEL = "test.porchlight.unit"  # how the label of every agent of a test starts
 
 
 def project(name="shop", path="/srv/shop", mode="plan", base=None, prefix=None, features=None):
@@ -89,6 +91,81 @@ class Terminal(terminal.Terminal):
         return started()
 
 
+class Launchctl:
+    """Stands in for launchctl, as subprocess.run would run it: it keeps what is loaded,
+    records what it was asked and loads nothing."""
+
+    def __init__(self):
+        self.loaded = set()
+        self.others = {"com.example.other"}  # what someone else loaded
+        self.definitions = {}  # label: the definition it was last loaded from
+        self.calls = []
+        self.lists = True  # whether it can say what is loaded
+        self.refused = set()  # the labels it fails to load
+        self.stuck = set()  # the labels it fails to unload
+        self.on_unload = None  # what unloading an agent changes, such as the process list
+
+    def __call__(self, words, **options):
+        self.calls.append(list(words))
+        verb = words[1]
+        if verb == "list":
+            if not self.lists:
+                return result(1, stderr="Could not contact launchd")
+            rows = "".join("-\t0\t%s\n" % label for label in sorted(self.loaded | self.others))
+            return result(stdout="PID\tStatus\tLabel\n" + rows)
+        if verb == "print":
+            return result(0 if words[2].split("/", 2)[2] in self.loaded else 113)
+        if verb == "bootstrap":
+            with open(words[3], "rb") as handle:
+                told = plistlib.load(handle)
+            if told["Label"] in self.refused:
+                return result(5, stderr="Bootstrap failed: 5: Input/output error\n")
+            if told["Label"] in self.loaded:
+                return result(37, stderr="Bootstrap failed: 37: Operation already in progress\n")
+            self.loaded.add(told["Label"])
+            self.definitions[told["Label"]] = told
+            return result()
+        if verb == "bootout":
+            label = words[2].split("/", 2)[2]
+            if label not in self.loaded:
+                return result(3, stderr="Boot-out failed: 3: No such process\n")
+            if label in self.stuck:
+                return result(36, stderr="Boot-out failed: 36: Operation now in progress\n")
+            self.loaded.discard(label)
+            if self.on_unload:
+                self.on_unload(label)
+            return result()
+        raise AssertionError("launchctl was asked something the tool never asks: %r" % (words,))
+
+    def did(self):
+        """What it was asked to change, in order: ("load" or "unload", the label or the file's name)."""
+        changes = []
+        for words in self.calls:
+            if words[1] == "bootstrap":
+                changes.append(("load", Path(words[3]).name[: -len(".plist")]))
+            elif words[1] == "bootout":
+                changes.append(("unload", words[2].split("/", 2)[2]))
+        return changes
+
+
+class Child:
+    """A program started beside this one: it runs until it is ended."""
+
+    def __init__(self, words):
+        self.words = list(words)
+        self.ended = False  # by whoever started it
+        self.exited = None  # by itself: its exit code
+
+    def poll(self):
+        return 0 if self.ended else self.exited
+
+    def terminate(self):
+        self.ended = True
+
+    def wait(self, timeout=None):
+        return self.poll()
+
+
 class StandInMac(Mac):
     """The Mac of a test: scratch folders, a clock that only moves when asked to wait."""
 
@@ -101,11 +178,17 @@ class StandInMac(Mac):
                 "PORCHLIGHT_LOG_DIR": str(root / "logs"),
                 "PORCHLIGHT_TRANSCRIPTS_DIR": str(root / "transcripts"),
                 "PORCHLIGHT_TMUX_SERVER": TMUX_SERVER,
+                "PORCHLIGHT_LAUNCH_AGENTS_DIR": str(root / "agents"),
+                "PORCHLIGHT_LABEL": LABEL,
             },
         )
+        self.launchctl = Launchctl()
+        self.launchd = launchd.Launchd(run=self.launchctl, uid=lambda: 501)
         self.ps = ps  # the process list, or what returns it
         self.now = 1_000_000.0
         self.terminated = []
+        self.spawned = []  # the programs started beside this one, each a Child
+        self.spawn_error = None
         self.commands = {}  # pid: its command, for command_of
         self.git_runner = Runner()
         self.tmux_runner = Runner()
@@ -124,6 +207,9 @@ class StandInMac(Mac):
             raise tools.ToolNotFound(name)
         return self.found[name]
 
+    def own_command(self):
+        return ["/tools/porchlight"], names.carried(self.environ, self.config_file)
+
     def output(self, words):
         self.asked.append(list(words))
         return self.outputs.get(" ".join(words))
@@ -136,6 +222,15 @@ class StandInMac(Mac):
 
     def terminate(self, pid):
         self.terminated.append(pid)
+
+    def pid(self):
+        return 4242
+
+    def spawn(self, words):
+        if self.spawn_error:
+            raise self.spawn_error
+        self.spawned.append(Child(words))
+        return self.spawned[-1]
 
     def clock(self):
         return self.now
