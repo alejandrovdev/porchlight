@@ -301,6 +301,45 @@ class Warp(unittest.TestCase):
         )
         self.assertEqual(list(self.configs.iterdir()), [])
 
+    def written(self, title, directory="/srv/shop/w", command="exec x"):
+        """The configuration Warp finds when it is asked to open a tab with this title."""
+        found = []
+
+        def reading(words):
+            (config,) = self.configs.iterdir()
+            found.append(config.read_text(encoding="utf8"))
+
+        self.warp(standins.Runner(reading)).open_tab("porchlight_ready_shop-aaaaaaaa", title, directory, command, lambda: 1)
+        return found[0]
+
+    def test_an_ordinary_title_is_written_as_it_is(self):
+        self.assertEqual(
+            self.written("shop · Fix the \"cart\""),
+            'name = "porchlight_ready_shop-aaaaaaaa"\ntitle = "shop · Fix the \\"cart\\""\n\n'
+            '[[panes]]\nid = "main"\ntype = "terminal"\ndirectory = "/srv/shop/w"\ncommands = ["exec x"]\n',
+        )
+
+    def test_a_title_loses_its_control_characters_so_the_file_stays_toml(self):
+        import tomllib
+
+        text = self.written("shop\x7f · Fix\x1b[2J the\ncart\x00\x85")
+
+        self.assertEqual(
+            text,
+            'name = "porchlight_ready_shop-aaaaaaaa"\ntitle = "shop · Fix[2J thecart"\n\n'
+            '[[panes]]\nid = "main"\ntype = "terminal"\ndirectory = "/srv/shop/w"\ncommands = ["exec x"]\n',
+        )
+        self.assertEqual(tomllib.loads(text)["title"], "shop · Fix[2J thecart")
+
+    def test_a_folder_or_a_command_with_a_delete_character_reads_back_as_it_is(self):
+        import tomllib
+
+        text = self.written("t", directory="/srv/sh\x7fop", command="exec x\x7f")
+
+        self.assertIn('directory = "/srv/sh\\u007fop"', text)
+        pane = tomllib.loads(text)["panes"][0]
+        self.assertEqual((pane["directory"], pane["commands"]), ("/srv/sh\x7fop", ["exec x\x7f"]))
+
     def test_asks_again_when_the_tab_did_not_start_and_then_gives_up(self):
         runner = standins.Runner()
 
