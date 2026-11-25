@@ -5,6 +5,7 @@ import json
 import unittest
 from pathlib import Path
 
+from porchlight import config
 from porchlight.features import resume_list
 from tests import standins
 from tests.test_resume_list import SOURCE_ID, WORKTREE, Scratch
@@ -49,13 +50,6 @@ class OnTheMac(Scratch):
         self.assertEqual(len(self.copies()), 1)
         self.assertIn("failed 00000000-0000-5000-8000-000000000000.jsonl", self.mac.log_text(self.project))
 
-    def test_a_pass_never_fails_whatever_happens(self):
-        self.mac.store = lambda project, kind: (_ for _ in ()).throw(RuntimeError("no state"))
-
-        result = self.run_command("sync")
-
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("sync failed", self.mac.log_text(self.project))
 
     def test_does_nothing_for_a_repository_claude_code_never_ran_in(self):
         self.source.write_text("".join(self.server_lines(1)))
@@ -86,6 +80,72 @@ class OnTheMac(Scratch):
         resume_list.list_copies(self.project, self.mac, out=printed.append)
 
         self.assertEqual(printed, ["No session created from the phone has a copy yet."])
+
+
+class Report(Scratch):
+    """What the `resume-list` command prints: the copies of every project that keeps them."""
+
+    def setUp(self):
+        super().setUp()
+        root = Path(self.scratch.name)
+        (root / "blog").mkdir()
+        (root / "docs").mkdir()
+        self.blog = standins.project("blog", str(root / "blog"))
+        self.docs = standins.project("docs", str(root / "docs"), features=("server",))  # without resume-list
+        self.configuration = config.Config("warp", (self.project, self.blog, self.docs))
+        self.source.write_text("".join(self.server_lines(1)))
+        self.printed = []
+
+    def report(self, configuration=None, **options):
+        return resume_list.report(configuration or self.configuration, self.mac, out=self.printed.append, **options)
+
+    def test_lists_the_copies_of_every_project_that_has_the_feature_under_its_name(self):
+        resume_list.sync(self.project, self.mac)
+        (copy,) = self.copies()
+
+        self.assertEqual(self.report(), 0)
+
+        self.assertEqual(self.printed[0], "shop")
+        self.assertRegex(self.printed[1], r"^  \d{4}-\d\d-\d\d \d\d:\d\d  worktree removed +Fix the header$")
+        self.assertEqual(self.printed[2], "      claude --resume " + copy.stem)
+        blog = self.printed.index("blog")
+        self.assertEqual(
+            self.printed[blog - 1 : blog + 2], ["", "blog", "  No session created from the phone has a copy yet."]
+        )
+        self.assertNotIn("docs", self.printed, "a project without the feature is left out")
+        self.assertEqual(
+            self.printed[-4:-2], ["", "Each copy is its own session: continuing it does not reach the phone."]
+        )
+        self.assertEqual(len([line for line in self.printed if line.startswith("Each copy")]), 1, "said once")
+
+    def test_does_not_bring_the_copies_up_to_date_unless_asked(self):
+        self.assertEqual(self.report(), 0)
+        self.assertEqual(self.copies(), [])
+
+        self.assertEqual(self.report(sync_first=True), 0)
+        (copy,) = self.copies()
+        self.assertIn("      claude --resume " + copy.stem, self.printed)
+
+    def test_says_when_no_project_has_the_feature(self):
+        self.assertEqual(self.report(config.Config("warp", (self.docs,))), 1)
+
+        self.assertEqual(self.printed, ['No project has the feature "resume-list". Nothing to list.'])
+
+    def test_a_project_whose_copies_cannot_be_brought_up_to_date_is_said_and_the_next_still_listed(self):
+        real = self.mac.store
+
+        def store(project, kind):
+            if project is self.project:
+                raise RuntimeError("no state")
+            return real(project, kind)
+
+        self.mac.store = store
+
+        self.assertEqual(self.report(sync_first=True), 1)
+
+        self.assertEqual(self.printed[:2], ["shop", "  Could not read its copies: RuntimeError('no state')"])
+        self.assertEqual(self.printed[-2:], ["blog", "  No session created from the phone has a copy yet."])
+        self.assertIn("resume list failed: RuntimeError('no state')", self.mac.log_text(self.project))
 
 
 if __name__ == "__main__":

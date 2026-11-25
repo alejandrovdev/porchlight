@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from porchlight import config
-from porchlight.atoms import terminal, tmux, worktrees
+from porchlight.atoms import terminal, tmux, tools, worktrees
 from porchlight.mac import Mac
 
 TMUX_SERVER = "porchlight-test"
@@ -58,13 +58,17 @@ class Terminal(terminal.Terminal):
     name = "standin"
     title = "Stand-in"
 
-    def __init__(self, running=True, opens=True, error=None):
+    def __init__(self, running=True, opens=True, error=None, installed=True):
+        self.is_installed = installed
         self.running = running
         self.opens = opens
         self.error = error
         self.tabs = []
         self.asked = 0  # how many times it was looked for
         self.on_open = None  # what a real tab would change, such as the process list
+
+    def installed(self):
+        return self.is_installed
 
     def runs(self, ps_text):
         self.asked += 1
@@ -105,12 +109,24 @@ class StandInMac(Mac):
         self.commands = {}  # pid: its command, for command_of
         self.git_runner = Runner()
         self.tmux_runner = Runner()
+        self.found = {name: "/tools/" + name for name in ("claude", "git", "tmux")}  # the tools installed
+        self.outputs = {}  # what a command prints, by its words joined with spaces
+        self.asked = []  # the commands whose output was read
         self.claude = "/tools/claude"
-        self.python = "/tools/python3"
+        self.porchlight = "/tools/porchlight"
         self.git = worktrees.Git("/tools/git", run=self.git_runner)
         self.tmux = tmux.Tmux(
             "/tools/tmux", TMUX_SERVER, "/package/tmux.conf", "/tools:/usr/bin", run=self.tmux_runner, environ={}
         )
+
+    def tool(self, name):
+        if name not in self.found:
+            raise tools.ToolNotFound(name)
+        return self.found[name]
+
+    def output(self, words):
+        self.asked.append(list(words))
+        return self.outputs.get(" ".join(words))
 
     def processes(self):
         return self.ps() if callable(self.ps) else self.ps

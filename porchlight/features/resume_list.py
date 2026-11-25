@@ -8,6 +8,7 @@ the phone's session is never changed.
 
     sync(project, mac)          bring the copies up to date; prints nothing
     list_copies(project, mac)   print each copy and the command that resumes it
+    report(configuration, mac)  the same list for every project that keeps copies
 
 A copy that was continued in the terminal is never overwritten: what the phone adds
 afterwards goes to a new copy.
@@ -19,7 +20,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -139,7 +139,16 @@ def running_commands(mac):
         return ""
 
 
-def list_copies(project, mac, out=print):
+CAUTION = (
+    "Each copy is its own session: continuing it does not reach the phone.",
+    "For one that is live on the phone, archive it there first or expect two",
+    "agents in the same worktree.",
+)
+
+
+def list_copies(project, mac, out=print, caution=True):
+    """Print a project's copies; True when it has some. `caution` adds what to know
+    before resuming one."""
     folder = main_folder(project, mac)
     state = mac.store(project, STATE).load({})
     rows = []
@@ -152,7 +161,7 @@ def list_copies(project, mac, out=print):
         rows.append((source.stat().st_mtime, known["copy"], prompt, cwd))
     if not rows:
         out("No session created from the phone has a copy yet.")
-        return
+        return False
     commands = running_commands(mac)
     for modified, target_id, prompt, cwd in sorted(rows, reverse=True):
         session = Path(cwd).name.replace(worktrees.SERVER_PREFIX, "", 1)
@@ -168,23 +177,35 @@ def list_copies(project, mac, out=print):
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(modified))
         out("%s  %-17s  %s" % (when, status, prompt[:90] or "(no prompt)"))
         out("    " + resume)
-    out("")
-    out("Each copy is its own session: continuing it does not reach the phone.")
-    out("For one that is live on the phone, archive it there first or expect two")
-    out("agents in the same worktree.")
+    if caution:
+        out("")
+        for line in CAUTION:
+            out(line)
+    return True
 
 
-def main(arguments, project, mac, out=print):
-    """`sync` or `list` for one project; 2 for anything else."""
-    command = arguments[0] if arguments else "sync"
-    if command == "sync":
+def report(configuration, mac, out=print, sync_first=False):
+    """Print the copies of every project that keeps them, each under its project's name;
+    `sync_first` brings them up to date before. 0 when every project could be read."""
+    projects = [project for project in configuration.projects if project.has("resume-list")]
+    if not projects:
+        out('No project has the feature "resume-list". Nothing to list.')
+        return 1
+    code, listed = 0, False
+    for index, project in enumerate(projects):
+        if index:
+            out("")
+        out(project.name)
         try:
-            sync(project, mac)
-        except Exception as error:  # a pass must never fail what runs it
-            mac.log(project, "sync failed: %r" % (error,))
-        return 0
-    if command == "list":
-        list_copies(project, mac, out)
-        return 0
-    sys.stderr.write("usage: [sync|list]\n")
-    return 2
+            if sync_first:
+                sync(project, mac)
+            listed = list_copies(project, mac, lambda line: out("  " + line if line else ""), caution=False) or listed
+        except Exception as error:  # one project never hides the others
+            mac.log(project, "resume list failed: %r" % (error,))
+            out("  Could not read its copies: %r" % (error,))
+            code = 1
+    if listed:
+        out("")
+        for line in CAUTION:
+            out(line)
+    return code

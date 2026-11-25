@@ -1,15 +1,18 @@
 """Tests of the atoms: the process list, transcripts, git worktrees, tmux, the terminal's
-tab opener and the state file. Each runs against scratch folders and stand-ins."""
+tab opener, the state file, the log and how the tool is named in a command. Each runs
+against scratch folders and stand-ins."""
 
 import json
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import porchlight
 from porchlight import config
-from porchlight.atoms import logs, processes, state, terminal, tmux, transcripts, worktrees
+from porchlight.atoms import invocation, logs, processes, state, terminal, tmux, transcripts, worktrees
 from tests import standins
 
 
@@ -35,6 +38,15 @@ class Processes(unittest.TestCase):
             processes.command_of(301, run=standins.Runner(lambda words: standins.result(stdout="claude x\n"))),
             "claude x\n",
         )
+
+    def test_reads_what_a_command_prints_and_nothing_when_it_cannot_run(self):
+        runner = standins.Runner(lambda words: standins.result(stdout="Usage: claude\n"))
+
+        self.assertEqual(processes.output(["/tools/claude", "--help"], run=runner), "Usage: claude\n")
+        self.assertEqual(runner.calls, [["/tools/claude", "--help"]])
+        self.assertIsNone(processes.output(["/nowhere/claude"], run=standins.Runner(lambda words: OSError("gone"))))
+        failing = standins.Runner(lambda words: standins.result(returncode=1, stdout="half an answer"))
+        self.assertIsNone(processes.output(["/tools/claude", "--help"], run=failing))
 
 
 class Transcripts(unittest.TestCase):
@@ -93,6 +105,14 @@ class Worktrees(unittest.TestCase):
         self.assertTrue(worktrees.has_remote(worktrees.Git("/tools/git", run=runner), "/srv/shop", "origin"))
         self.assertFalse(worktrees.has_remote(worktrees.Git("/tools/git", run=without), "/srv/shop", "origin"))
         self.assertEqual(runner.calls, [["/tools/git", "-C", "/srv/shop", "remote", "get-url", "origin"]])
+
+    def test_tells_whether_a_folder_is_a_git_repository(self):
+        inside = standins.Runner(lambda words: standins.result(stdout="true\n"))
+        outside = standins.Runner(lambda words: standins.result(returncode=128, stderr="fatal: not a git repository"))
+
+        self.assertTrue(worktrees.is_repository(worktrees.Git("/tools/git", run=inside), "/srv/shop"))
+        self.assertFalse(worktrees.is_repository(worktrees.Git("/tools/git", run=outside), "/srv/shop"))
+        self.assertEqual(inside.calls, [["/tools/git", "-C", "/srv/shop", "rev-parse", "--is-inside-work-tree"]])
 
     def test_keeps_its_worktrees_where_claude_code_keeps_a_repositorys(self):
         self.assertEqual(worktrees.folder("/srv/shop"), Path("/srv/shop/.claude/worktrees"))
@@ -209,6 +229,16 @@ class Warp(unittest.TestCase):
         self.assertTrue(warp.runs("77 /Applications/Warp.app/Contents/MacOS/stable\n"))
         self.assertFalse(warp.runs("77 /Applications/Other.app/Contents/MacOS/other\n78 grep Warp.app\n"))
 
+    def test_tells_whether_the_app_is_installed_without_starting_it(self):
+        applications = Path(self.scratch.name) / "Applications"
+        runner = standins.Runner()
+        warp = terminal.Warp(self.configs, run=runner, applications=[applications])
+
+        self.assertFalse(warp.installed())
+        (applications / "Warp.app").mkdir(parents=True)
+        self.assertTrue(warp.installed())
+        self.assertEqual(runner.calls, [], "nothing is run to find out")
+
     def test_opens_a_tab_through_a_configuration_it_removes_afterwards(self):
         runner = standins.Runner(self.opening)
 
@@ -299,6 +329,61 @@ class Logs(unittest.TestCase):
             self.assertEqual([line[20:] for line in lines], ["first", "second"])
             self.assertRegex(lines[0], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} first$")
             logs.write(Path(scratch) / "logs" / "shop.log" / "below-a-file", "ignored")
+
+    def test_a_message_that_repeats_the_last_line_is_written_once_until_it_changes(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "logs" / "shop.log"
+
+            for message in ("missing", "missing", "missing", "back", "missing", "missing"):
+                logs.write(path, message)
+
+            self.assertEqual(
+                [line[20:] for line in path.read_text(encoding="utf8").splitlines()], ["missing", "back", "missing"]
+            )
+
+    def test_only_the_whole_last_message_counts_as_a_repeat(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "shop.log"
+
+            for message in ("no worktree: fatal\nhint: missing", "missing", "no worktree: fatal\nhint: missing"):
+                logs.write(path, message)
+                logs.write(path, message)
+
+            text = path.read_text(encoding="utf8")
+            self.assertEqual(text.count("no worktree: fatal\nhint: missing\n"), 2, "a message of two lines too")
+            self.assertEqual(len(text.splitlines()), 5)
+
+
+class Invocation(unittest.TestCase):
+    """How the tool is named in a command it hands to a tab, a session or a service."""
+
+    def test_names_the_installed_command_when_the_path_has_one(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            installed = Path(scratch) / "porchlight"
+            installed.write_text("#!/bin/sh\n")
+            installed.chmod(0o755)
+
+            words, environment = invocation.words("porchlight", path=scratch)
+
+            self.assertEqual((words, environment), ([str(installed)], {}))
+            self.assertEqual(invocation.shell(words, environment), shlex.quote(str(installed)))
+
+    def test_falls_back_to_this_interpreter_and_this_package(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            words, environment = invocation.words("porchlight", path=scratch)
+
+        self.assertEqual(words, [sys.executable, "-m", "porchlight"])
+        self.assertEqual(environment, {"PYTHONPATH": str(Path(porchlight.__file__).resolve().parent.parent)})
+
+    def test_a_shell_reads_the_fallback_as_one_command_even_after_exec(self):
+        words, environment = ["/some where/python3", "-m", "porchlight"], {"PYTHONPATH": "/its own/folder"}
+
+        command = invocation.shell(words, environment)
+
+        self.assertEqual(command, "/usr/bin/env 'PYTHONPATH=/its own/folder' '/some where/python3' -m porchlight")
+        self.assertEqual(
+            shlex.split(command), ["/usr/bin/env", "PYTHONPATH=/its own/folder", "/some where/python3", "-m", "porchlight"]
+        )
 
 
 if __name__ == "__main__":

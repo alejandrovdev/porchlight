@@ -1,10 +1,13 @@
 """Tests of finding claude, tmux and git: through PATH, then Homebrew's two prefixes."""
 
 import os
+import shlex
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+import porchlight
 from porchlight import config
 from porchlight.atoms import tmux, tools
 from porchlight.mac import Mac
@@ -78,6 +81,22 @@ class TheMac(unittest.TestCase):
         self.assertIsNone(Mac.of(config.Config(), environ).terminal)
         self.assertEqual(Mac.of(config.Config("warp"), environ).terminal.configs, Path("/scratch/tab_configs"))
         self.assertEqual(Mac.of(config.Config("warp"), {}).terminal.configs, Path.home() / ".warp" / "tab_configs")
+
+    def test_names_itself_by_the_installed_command_when_its_path_has_one(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            installed = Path(scratch) / "porchlight"
+            installed.write_text("#!/bin/sh\n")
+            installed.chmod(0o755)
+
+            self.assertEqual(Mac(environ={"PATH": scratch}).porchlight, shlex.quote(str(installed)))
+
+    def test_names_itself_by_its_interpreter_and_its_own_folder_otherwise(self):
+        package = Path(porchlight.__file__).resolve().parent
+
+        self.assertEqual(
+            shlex.split(Mac(environ={"PATH": os.devnull}).porchlight),
+            ["/usr/bin/env", "PYTHONPATH=%s" % package.parent, sys.executable, "-m", "porchlight"],
+        )
 
     def test_reads_claude_codes_sessions_where_it_keeps_them_unless_told_otherwise(self):
         self.assertEqual(Mac(environ={}).transcripts, Path.home() / ".claude" / "projects")

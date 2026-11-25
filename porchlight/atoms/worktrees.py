@@ -28,6 +28,12 @@ def of_server_session(repository, session):
     return folder(repository) / (SERVER_PREFIX + session)
 
 
+def is_repository(git, directory):
+    """Whether a folder is a checkout of a git repository."""
+    answer = git(directory, "rev-parse", "--is-inside-work-tree")
+    return answer.returncode == 0 and answer.stdout.strip() == "true"
+
+
 def default_base(git, repository):
     """The default branch of the repository's origin, as git recorded it; None when it did not."""
     answer = git(repository, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")

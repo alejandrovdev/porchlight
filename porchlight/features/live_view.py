@@ -1,6 +1,6 @@
 """Read-only live view of one session the Remote Control server started.
 
-    python -m porchlight.features.live_view <project> <session id, cse_...>
+    view(project, session, mac)   what the command `view <project> <session id, cse_...>` runs
 
 Prints the session's conversation and keeps following it: what the user wrote, what
 Claude answered, and one line per tool call. Nothing typed here reaches the session; it
@@ -10,17 +10,15 @@ ends (the session was archived), which closes the terminal tab that runs it
 """
 
 import re
-import shlex
 import shutil
 import sys
 import textwrap
 from pathlib import Path
 
-from .. import config, names
+from .. import names
 from ..atoms import processes, transcripts, worktrees
-from ..mac import Mac
 
-MODULE = "porchlight.features.live_view"  # what a tab runs with `python -m`
+COMMAND = "view"  # the command of the tool that a tab runs
 SESSION = re.compile(re.escape(names.SERVER_SESSION) + r"[A-Za-z0-9]+")
 HISTORY = 30  # how many earlier items to show when the view opens
 NOT_CONVERSATION = (
@@ -55,9 +53,10 @@ def live_sessions(ps_text, worktrees_folder):
     return live
 
 
-def command(project, session, python):
-    """What the tab of a view runs."""
-    return "exec %s -m %s %s %s" % (shlex.quote(python), MODULE, project.name, session)
+def command(project, session, porchlight):
+    """What the tab of a view runs. `porchlight` is the tool as a shell reads it; a
+    project's name and a session's id are plain words."""
+    return "exec %s %s %s %s" % (porchlight, COMMAND, project.name, session)
 
 
 def transcript(project, session, mac):
@@ -191,25 +190,10 @@ def follow(project, session, mac, screen=None):
     return 0
 
 
-def main(arguments, configuration=None, mac=None):
-    """What `python -m` runs in the tab: the view of one session of one project."""
-    if len(arguments) != 2 or not SESSION.fullmatch(arguments[1]):
-        sys.stderr.write("usage: python -m %s <project> <session id, cse_...>\n" % MODULE)
-        return 2
+def view(project, session, mac, out=print):
+    """What the tab runs: the view of one session, until it ends or the user closes it.
+    0 when the session ended or the view was closed, 1 when the session does not run here."""
     try:
-        configuration = configuration or config.load()
-    except config.ConfigError as error:
-        sys.stderr.write("%s\n" % error)
-        return 2
-    project = configuration.project(arguments[0])
-    if project is None:
-        sys.stderr.write('no project "%s" in the configuration\n' % arguments[0])
-        return 2
-    try:
-        return follow(project, arguments[1], mac or Mac.of(configuration))
+        return follow(project, session, mac, Screen(None if out is print else out))
     except KeyboardInterrupt:
         return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

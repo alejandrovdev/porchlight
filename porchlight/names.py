@@ -19,6 +19,16 @@ SHORT = 8  # how much of a session's id a name carries
 SERVER_SESSION = "cse_"  # how the id of a session the server starts begins
 
 
+def command(*words):
+    """A command of the tool as a person types it."""
+    return " ".join((TOOL,) + words)
+
+
+def no_project():
+    """What a command says when the configuration has no project."""
+    return "No project is configured. Add one with: " + command("setup")
+
+
 def variable(name):
     """The environment variable that moves a folder or names a tool."""
     return "%s_%s" % (TOOL.upper(), name.upper())

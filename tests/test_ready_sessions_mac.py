@@ -120,26 +120,39 @@ class OnTheMac(unittest.TestCase):
 
 
 class Note(unittest.TestCase):
-    def test_says_in_english_how_to_reopen_and_names_the_command(self):
-        note = ready_sessions.note()
+    def test_says_in_english_how_to_reopen_and_names_the_command_it_is_given(self):
+        note = ready_sessions.note("/tools/porchlight")
 
-        self.assertIn("reopen <name>", note)
-        self.assertIn("porchlight reopen <name>", note)
-        self.assertNotIn("/", note, "a command, not the path of a script")
+        self.assertIn("run this with Bash and report what it prints: /tools/porchlight reopen <name>.", note)
+        self.assertIn("It opens the session in a new tab", note)
         self.assertNotIn(".sh", note)
+
+    def test_the_command_is_the_one_the_tool_names_itself_by_whole(self):
+        fallback = "/usr/bin/env 'PYTHONPATH=/its own/folder' /some/python3 -m porchlight"
+
+        self.assertIn(fallback + " reopen <name>.", ready_sessions.note(fallback))
+
+    def test_without_tabs_the_note_promises_no_tab(self):
+        note = ready_sessions.note("/tools/porchlight", tabs=False)
+
+        self.assertIn("/tools/porchlight reopen <name>.", note)
+        self.assertNotIn("tab", note)
+        self.assertIn("online in the app", note)
 
     def test_every_session_is_told_how(self):
         project = standins.project("blog", "/srv/blog", mode="acceptEdits", prefix="Blog")
 
-        command = ready_sessions.command_line(project, A, False, "/tools/claude", "/state/settings.json")
+        command = ready_sessions.command_line(
+            project, A, False, "/tools/claude", "/state/settings.json", "/tools/porchlight"
+        )
 
-        self.assertIn("porchlight reopen", command)
+        self.assertIn("/tools/porchlight reopen <name>", command)
         self.assertIn(" --permission-mode acceptEdits ", command, "the mode is the project's")
         self.assertIn(" --remote-control-session-name-prefix Blog ", command, "the prefix is the project's")
         self.assertIn(" --settings /state/settings.json ", command)
 
     def test_without_reopen_the_note_says_nothing_of_reopening(self):
-        note = ready_sessions.note(reopen=False)
+        note = ready_sessions.note()
 
         self.assertNotIn("reopen", note.lower())
         self.assertIn("driven from the Claude mobile app", note)
@@ -147,9 +160,12 @@ class Note(unittest.TestCase):
     def test_a_project_without_reopen_tells_its_sessions_nothing_of_it(self):
         project = standins.project("blog", "/srv/blog", features=("ready-session", "tabs"))
 
-        command = ready_sessions.command_line(project, A, False, "/tools/claude", "/state/settings.json")
+        command = ready_sessions.command_line(
+            project, A, False, "/tools/claude", "/state/settings.json", "/tools/porchlight"
+        )
 
         self.assertNotIn("reopen", command.lower())
+        self.assertNotIn("/tools/porchlight", command)
         self.assertIn(" --append-system-prompt ", command, "it is still told where it runs")
 
 
@@ -654,6 +670,7 @@ class Reopen(OnTheMac):
         self.assertEqual(tab.name, "porchlight_ready_shop-aaaaaaaa")
         self.assertEqual(tab.title, "Shop · Header on phones")
         self.assertIn(f" --resume {A} ", tab.command)
+        self.assertIn("/tools/porchlight reopen <name>", tab.command, "it is told how to reopen another")
         self.assertTrue(tab.command.endswith(" --remote-control"))
         self.assertEqual(len(self.mac.git_runner.having("worktree", "add")), 1, "its worktree comes back")
         record = self.saved()["sessions"][A]
@@ -693,22 +710,109 @@ class Reopen(OnTheMac):
         self.assertEqual(self.terminal.tabs, [])
         self.assertEqual(self.saved()["sessions"][A]["state"], "closed")
 
-    def test_opens_no_tab_for_a_project_without_tabs_and_still_lists_its_closed_sessions(self):
-        project = self.having("ready-session", "reopen")
-        self.save({A: self.record("closed", title="Header on phones", tidied=True)})
 
-        self.assertEqual(ready_sessions.reopen(project, "header", self.mac, out=self.printed.append), 1)
 
+class ReopenWithoutTabs(OnTheMac):
+    """A project without `tabs`: the session comes back hidden, as a ready session starts."""
+
+    ATTACH = "/tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'"
+
+    def setUp(self):
+        super().setUp()
+        self.project = self.having("ready-session", "reopen")
+        self.save({A: self.record("archived", title="Header on phones", tidied=True, show_failures=3)})
+        self.git(rev_parse=standins.result(returncode=0))
+
+    def reopen(self, text):
+        return ready_sessions.reopen(self.project, text, self.mac, out=self.printed.append)
+
+    def claude_resumes(self, pid=601):
+        def answer(words):
+            if "new-session" in words:
+                self.mac.ps = f"{pid} claude --resume {A} --remote-control\n"
+
+        self.mac.tmux_runner.answers = answer
+
+    def test_resumes_the_session_hidden_in_tmux_and_prints_the_command_that_attaches_to_it(self):
+        self.claude_resumes()
+
+        self.assertEqual(self.reopen("header on phones"), 0)
+
+        (started,) = self.mac.tmux_runner.having("new-session")
+        self.assertEqual(started[:3], ["/tools/tmux", "-L", "porchlight-test"], "in the tool's own tmux server")
+        self.assertIn("-d", started, "detached: nobody sees it")
+        self.assertEqual(started[started.index("-s") + 1], "shop-aaaaaaaa")
+        self.assertEqual(started[started.index("-c") + 1], str(self.worktree(make=False)))
+        self.assertIn(f" --resume {A} ", started[-1], "the same conversation")
+        self.assertIn("--remote-control", started[-1])
+        self.assertEqual(len(self.mac.git_runner.having("worktree", "add")), 1, "its worktree comes back")
+        self.assertEqual((self.terminal.tabs, self.terminal.asked), ([], 0), "the terminal is never looked for")
         self.assertEqual(
             self.printed,
-            ['A session is reopened in a tab, and the project "shop" does not have the feature "tabs". '
-             "Nothing was reopened."],
-        )  # fmt: skip
-        self.assertEqual((self.terminal.tabs, self.terminal.asked), ([], 0))
-        self.assertEqual(self.mac.git_runner.calls, [])
+            [
+                'Reopened "Header on phones" (project shop), hidden: this project opens no tabs. It comes back '
+                "online in the Claude app, as the same session, within a few seconds. To see it on the Mac, run:",
+                "    " + self.ATTACH,
+            ],
+        )
+        self.assertIn("reopened aaaaaaaa (Header on phones), hidden", self.mac.log_text(self.project))
 
-        self.assertEqual(ready_sessions.reopen(project, "", self.mac, out=self.printed.append), 0)
-        self.assertEqual(self.printed[1], "Closed sessions:")
+    def test_the_session_is_then_in_use_and_hidden_so_that_status_shows_how_to_attach(self):
+        self.claude_resumes()
+        self.reopen("header")
+
+        record = self.saved()["sessions"][A]
+        self.assertEqual(
+            (record["state"], record["tidied"], record["shown"], record["tmux"]), ("used", False, False, "shop-aaaaaaaa")
+        )
+        self.assertNotIn("show_failures", record, "a tab given up on before does not count against it")
+        self.assertEqual(record["started"], self.mac.now)
+        status = []
+        ready_sessions.status(self.project, self.mac, out=status.append)
+        self.assertRegex(status[0], r"^aaaaaaaa  used .* Header on phones  \(pid 601, not in the app yet, hidden\)$")
+        self.assertEqual(status[1], "    " + self.ATTACH)
+
+        ready_sessions.reconcile(self.project, self.mac)
+        self.assertEqual(self.mac.terminated, [], "the next pass leaves it running")
+        self.assertEqual(self.saved()["sessions"][A]["state"], "used")
+
+    def test_says_when_the_session_did_not_start_and_leaves_nothing_behind(self):
+        self.assertEqual(self.reopen("header"), 1)  # tmux answers, and Claude Code never shows up
+
+        self.assertEqual(self.printed, ["The session did not start in tmux. Nothing was reopened."])
+        self.assertEqual(self.saved()["sessions"][A]["state"], "archived")
+        self.assertEqual(
+            [call[5:] for call in self.mac.tmux_runner.having("kill-session")],
+            [["kill-session", "-t", "=shop-aaaaaaaa"]],
+        )
+
+    def test_says_what_tmux_answered_when_it_refused(self):
+        self.mac.tmux_runner.answers = lambda words: (
+            standins.result(returncode=1, stderr="duplicate session: shop-aaaaaaaa\n") if "new-session" in words else None
+        )
+
+        self.assertEqual(self.reopen("header"), 1)
+
+        self.assertEqual(self.printed, ["The session did not start in tmux. Nothing was reopened."])
+        self.assertIn("tmux did not start aaaaaaaa: duplicate session", self.mac.log_text(self.project))
+        self.assertEqual(self.saved()["sessions"][A]["state"], "archived")
+
+    def test_still_lists_the_closed_sessions_and_asks_when_none_or_several_match(self):
+        self.assertEqual(self.reopen(""), 0)
+        self.assertEqual(self.printed[0], "Closed sessions:")
+        self.assertEqual(self.reopen("footer"), 1)
+        self.assertEqual(self.printed[2], 'No closed session matches "footer". The closed ones:')
+        self.assertEqual(self.mac.tmux_runner.calls, [])
+
+    def test_a_project_with_tabs_still_reopens_in_a_tab(self):
+        self.project = self.having("ready-session", "tabs", "reopen")
+        self.terminal.on_open = lambda tab: setattr(self.mac, "ps", f"601 claude --resume {A} --remote-control\n")
+
+        self.assertEqual(self.reopen("header"), 0)
+
+        self.assertEqual(len(self.terminal.tabs), 1)
+        self.assertEqual(self.mac.tmux_runner.calls, [])
+        self.assertIn("in a new tab on the Mac", self.printed[-1])
 
 
 class ReopenAnywhere(OnTheMac):

@@ -114,16 +114,26 @@ class Pass(unittest.TestCase):
     def test_the_status_of_a_project_names_both_kinds_of_session(self):
         printed = []
 
-        passes.status(self.project, self.mac, out=printed.append)
+        passes.project_status(self.project, self.mac, out=printed.append)
 
         self.assertEqual(
             printed,
             [
                 "Ready sessions, with Claude Code's interface:",
-                "No session with Claude Code's interface yet.",
+                "  No session with Claude Code's interface yet.",
                 "Sessions the server started, with a read-only view:",
-                "No session the server started is running.",
+                "  No session the server started is running.",
             ],
+        )
+
+    def test_the_status_of_a_project_without_the_server_names_its_ready_sessions_only(self):
+        project = standins.project("shop", self.project.path, features=("ready-session",))
+        printed = []
+
+        passes.project_status(project, self.mac, out=printed.append)
+
+        self.assertEqual(
+            printed, ["Ready sessions, with Claude Code's interface:", "  No session with Claude Code's interface yet."]
         )
 
 

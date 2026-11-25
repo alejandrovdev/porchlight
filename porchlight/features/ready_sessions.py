@@ -9,8 +9,9 @@ terminal tab shows.
                                  that is now in use, stop a session the app archived, tidy
                                  what ended
     status(project, mac)         print the sessions and their state
-    reopen(project, text, mac)   open a closed session again in a new tab, back online in
-                                 the app; without a name, list the closed ones
+    reopen(project, text, mac)   open a closed session again, back online in the app: in a
+                                 new tab, or hidden for a project without tabs; without a
+                                 name, list the closed ones
     reopen_anywhere(configuration, text, mac)
                                  the same, among the closed sessions of every project
 
@@ -21,7 +22,8 @@ tab opens attached to it, and another free one is prepared. Closing that tab end
 session, as it would without tmux. Archiving a session in the app ends its process, which
 closes its tab. Unarchiving it in the app reaches nothing on the Mac, so a session comes
 back with `reopen`, which a session runs when the user asks it to; a reopened session runs
-in its tab directly, without tmux.
+in its tab directly, without tmux, and in a project without tabs it runs hidden, in tmux,
+as a ready session does.
 
 Only sessions in this project's own state are ever stopped or tidied; a session someone
 started by hand is never touched. A worktree is removed only when it is clean and its HEAD
@@ -31,9 +33,9 @@ Three features of a project decide what happens here. Without `ready-session` no
 session is prepared, and one that still waits from before is ended and discarded; a session
 in use is followed until it ends, so the app still archives it and its worktree is still
 tidied. Without `tabs` a session in use gets no tab and the terminal is never looked for:
-it keeps running hidden, and `status` prints the command that attaches to it. Without
-`reopen` a session is told nothing about reopening and `reopen` refuses; a session is
-reopened in a tab, so for a project without `tabs` it lists the closed ones and opens none.
+it keeps running hidden, and `status` prints the command that attaches to it; a session
+that is reopened comes back hidden too, and `reopen` prints that command. Without `reopen`
+a session is told nothing about reopening and `reopen` refuses.
 """
 
 import calendar
@@ -59,19 +61,20 @@ ORIGIN = "origin"  # the remote whose default branch a worktree starts from
 NO_BASE = "no base branch is known"
 
 
-def note(reopen=True):
+def note(porchlight="", tabs=True):
     """What a session is told, beside its system prompt: where it runs and, when the
-    project reopens sessions, how to reopen another."""
+    project reopens sessions, how to reopen another. `porchlight` is the command that runs
+    the tool, as a shell reads it; without it nothing is said of reopening."""
     where = "This session runs on the user's Mac and is driven from the Claude mobile app."
-    if not reopen:
+    if not porchlight:
         return where
+    how = "opens the session in a new tab" if tabs else "starts the session again on the Mac, out of sight,"
     return (
         where + " "
         "When the user asks to reopen a session (for example: reopen <name>) or to list the closed "
         "ones, run this with Bash and report what it prints: %s reopen <name>. Without a name it "
         "lists the closed sessions; when the name matches none or several, pick the id from that "
-        "list and run it again with the id. It opens the session in a new tab and puts it back "
-        "online in the app." % names.TOOL
+        "list and run it again with the id. It %s and puts it back online in the app." % (porchlight, how)
     )
 
 
@@ -223,8 +226,9 @@ def match(sessions, text):
     ]
 
 
-def command_line(project, session, resume, claude, settings):
-    """What a tab runs: Claude Code with Remote Control, on a new or a known conversation."""
+def command_line(project, session, resume, claude, settings, porchlight):
+    """What a tab runs: Claude Code with Remote Control, on a new or a known conversation.
+    `porchlight` is the command that runs the tool, for what the session is told."""
     words = [
         claude,
         "--resume" if resume else "--session-id",
@@ -234,7 +238,7 @@ def command_line(project, session, resume, claude, settings):
         "--settings",
         str(settings),
         "--append-system-prompt",
-        note(project.has("reopen")),
+        note(porchlight if project.has("reopen") else "", project.has("tabs")),
         "--remote-control-session-name-prefix",
         project.prefix,
         "--remote-control",  # last: a word after it would be the session's name
@@ -242,10 +246,13 @@ def command_line(project, session, resume, claude, settings):
     return "exec " + " ".join(shlex.quote(word) for word in words)
 
 
-def hidden_start(project, session, worktree, tmux, claude, settings):
-    """What starts a session nobody sees: Claude Code in a detached tmux session."""
+def hidden_start(project, session, worktree, tmux, claude, settings, porchlight, resume=False):
+    """What starts a session nobody sees: Claude Code in a detached tmux session, on a new
+    conversation or, to reopen one, on a known conversation."""
     return tmux.new_session(
-        names.tmux_session(project, session), worktree, command_line(project, session, False, claude, settings)
+        names.tmux_session(project, session),
+        worktree,
+        command_line(project, session, resume, claude, settings, porchlight),
     )
 
 
@@ -406,11 +413,23 @@ def show(project, session, record, mac):
     mac.log(project, "no tab opened for %s (attempt %d)" % (names.short(session), record["show_failures"]))
 
 
+def start_hidden(project, session, words, mac):
+    """Run what starts a session in tmux; the pid of the session once it runs, else 0."""
+    try:
+        launched = mac.tmux.execute(words)
+        if launched.returncode == 0:
+            return mac.wait_for(lambda: session_runs(session, mac), 25)
+        mac.log(project, "tmux did not start %s: %s" % (names.short(session), launched.stderr.strip()[:300]))
+    except (OSError, subprocess.SubprocessError) as error:
+        mac.log(project, "tmux did not start %s: %r" % (names.short(session), error))
+    return 0
+
+
 def create(project, state, mac):
     """Prepare a free session: a worktree and Claude Code running hidden in it."""
     # Found and written before anything is made: a missing tool or a settings file that
     # cannot be written must leave no worktree behind.
-    tmux, claude = mac.tmux, mac.claude
+    tmux, claude, porchlight = mac.tmux, mac.claude, mac.porchlight
     settings = mac.settings(project)
     session_settings.stage(project, settings)
     session = str(uuid.uuid4())
@@ -429,14 +448,8 @@ def create(project, state, mac):
     }
     started = 0
     if add_worktree(project, record, session, mac):
-        try:
-            launched = tmux.execute(hidden_start(project, session, record["worktree"], tmux, claude, settings))
-            if launched.returncode == 0:
-                started = mac.wait_for(lambda: session_runs(session, mac), 25)
-            else:
-                mac.log(project, "tmux did not start %s: %s" % (names.short(session), launched.stderr.strip()[:300]))
-        except (OSError, subprocess.SubprocessError) as error:
-            mac.log(project, "tmux did not start %s: %r" % (names.short(session), error))
+        words = hidden_start(project, session, record["worktree"], tmux, claude, settings, porchlight)
+        started = start_hidden(project, session, words, mac)
     if not started:
         tmux.kill_session(record["tmux"])
         tidy(project, record, mac)
@@ -524,6 +537,35 @@ def status(project, mac, out=print):
             out("    " + mac.tmux.attach(record["tmux"]))  # no tab will open: how to see it
 
 
+def reopen_hidden(project, session, record, mac, out):
+    """Resume a closed session with no tab, in tmux, as a ready session starts; True when
+    it runs. The record then says it is in use and hidden; saving it is the caller's."""
+    # Found and written before anything is made, as for a new session.
+    tmux, claude, porchlight = mac.tmux, mac.claude, mac.porchlight
+    settings = mac.settings(project)
+    session_settings.stage(project, settings)
+    name = names.tmux_session(project, session)
+    if not add_worktree(project, record, session, mac):
+        out("Could not prepare the worktree %s. Nothing was reopened." % record["worktree"])
+        return False
+    words = hidden_start(project, session, record["worktree"], tmux, claude, settings, porchlight, resume=True)
+    if not start_hidden(project, session, words, mac):
+        tmux.kill_session(name)
+        tidy(project, record, mac)  # the worktree goes back to how a closed session leaves it
+        out("The session did not start in tmux. Nothing was reopened.")
+        return False
+    record.update(state="used", started=mac.clock(), changed=mac.clock(), tidied=False, shown=False, tmux=name)
+    record.pop("show_failures", None)
+    mac.log(project, "reopened %s (%s), hidden" % (names.short(session), label(record, session)))
+    out(
+        'Reopened "%s" (project %s), hidden: this project opens no tabs. It comes back online in the '
+        "Claude app, as the same session, within a few seconds. To see it on the Mac, run:"
+        % (label(record, session), project.name)
+    )
+    out("    " + tmux.attach(name))
+    return True
+
+
 def reopen(project, text, mac, out=print):
     """Open a closed session of a project again; 0 when it is open or the list was asked for."""
     if not project.has("reopen"):
@@ -540,11 +582,10 @@ def reopen(project, text, mac, out=print):
         session = found[0]
         record = sessions[session]
         if not project.has("tabs"):
-            out(
-                'A session is reopened in a tab, and the project "%s" does not have the feature "tabs". '
-                "Nothing was reopened." % project.name
-            )
-            return 1
+            if not reopen_hidden(project, session, record, mac, out):
+                return 1
+            save_state(store, state)
+            return 0
         if mac.terminal is None:
             out("No terminal is set up for tabs. Nothing was reopened.")
             return 1
@@ -557,7 +598,7 @@ def reopen(project, text, mac, out=print):
             return 1
         session_settings.stage(project, settings)
         title = tab_title(project, record, session)
-        command = command_line(project, session, True, claude, settings)
+        command = command_line(project, session, True, claude, settings, mac.porchlight)
         if not open_tab(project, session, title, record["worktree"], command, lambda: session_runs(session, mac), mac):
             out("The tab did not start. Nothing was reopened.")
             return 1

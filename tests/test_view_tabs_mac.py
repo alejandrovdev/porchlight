@@ -1,17 +1,14 @@
 """Tests of what the tabs of server sessions, and the view they run, do on the Mac:
 against stand-ins and scratch folders."""
 
-import importlib.util
-import io
 import json
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 
-from porchlight import config, names
-from porchlight.atoms import transcripts
+from porchlight import names
+from porchlight.atoms import invocation, transcripts
 from porchlight.features import live_view, view_tabs
 from tests import standins
 
@@ -54,16 +51,20 @@ class OnTheMac(unittest.TestCase):
 
 
 class Command(OnTheMac):
-    def test_the_tab_runs_the_view_with_the_interpreter_that_runs_the_tool(self):
-        command = live_view.command(self.project, LIVE, self.mac.python)
+    def test_the_tab_runs_the_view_through_the_command_the_tool_names_itself_by(self):
+        command = live_view.command(self.project, LIVE, self.mac.porchlight)
 
-        self.assertEqual(command, "exec /tools/python3 -m porchlight.features.live_view shop cse_01AAA")
-        self.assertIsNotNone(importlib.util.find_spec(live_view.MODULE))
+        self.assertEqual(command, "exec /tools/porchlight view shop cse_01AAA")
 
     def test_the_process_list_recognizes_the_view_it_starts(self):
-        command = live_view.command(self.project, LIVE, "/some where/Python")
+        installed = invocation.shell(["/some where/porchlight"])
+        fallback = invocation.shell(["/some where/Python", "-m", "porchlight"], {"PYTHONPATH": "/its own/folder"})
 
-        self.assertEqual(view_tabs.views("401 " + command[len("exec ") :].replace("'", "") + "\n"), {LIVE})
+        for porchlight in (installed, fallback):
+            command = live_view.command(self.project, LIVE, porchlight)
+            # What the process list shows once the shell, and env, became the view.
+            shown = command[len("exec ") :].replace("'", "").replace("/usr/bin/env PYTHONPATH=/its own/folder ", "")
+            self.assertEqual(view_tabs.views("401 " + shown + "\n"), {LIVE}, command)
 
 
 class OpenTab(OnTheMac):
@@ -76,7 +77,7 @@ class OpenTab(OnTheMac):
         (tab,) = self.terminal.tabs
         self.assertEqual(tab.name, "porchlight_view_shop-01AAA")
         self.assertEqual(tab.title, "Shop · Fix the header")
-        self.assertEqual(tab.command, live_view.command(self.project, LIVE, "/tools/python3"))
+        self.assertEqual(tab.command, "exec /tools/porchlight view shop cse_01AAA")
         self.assertEqual(tab.directory, str(Path.home()))
         self.assertEqual((tab.attempts, tab.patience), (2, 8))
 
@@ -174,7 +175,7 @@ class Status(OnTheMac):
         view_tabs.status(self.project, self.mac, out=self.printed.append)
         self.mac.store(self.project, view_tabs.STATE).save({LIVE: {"opened": True, "attempts": 1}})
         view_tabs.status(self.project, self.mac, out=self.printed.append)
-        self.mac.ps += "401 /tools/python3 -m porchlight.features.live_view shop cse_01AAA\n"
+        self.mac.ps += "401 /tools/porchlight view shop cse_01AAA\n"
         view_tabs.status(self.project, self.mac, out=self.printed.append)
 
         self.assertRegex(self.printed[0], r"^cse_01AAA  pid 101 +no tab yet +Shop · Fix the header$")
@@ -243,26 +244,26 @@ class Follow(OnTheMac):
         self.assertEqual(shown[2], "▌ prompt 10")
 
 
-class Main(OnTheMac):
-    def main(self, *arguments, configuration=None):
-        errors = io.StringIO()
-        with redirect_stderr(errors):
-            code = live_view.main(list(arguments), configuration, self.mac)
-        return code, errors.getvalue()
+class View(OnTheMac):
+    """What the `view` command runs in the tab."""
 
-    def test_rejects_anything_but_a_project_and_a_server_session(self):
-        configuration = config.Config("warp", (self.project,))
+    def test_follows_the_session_and_prints_through_what_it_is_given(self):
+        self.mac.ps = ""
 
-        for arguments in ((), ("shop",), ("shop", "not-a-session"), ("shop", LIVE, "more")):
-            code, errors = self.main(*arguments, configuration=configuration)
-            self.assertEqual(code, 2)
-            self.assertIn("usage", errors)
+        self.assertEqual(live_view.view(self.project, LIVE, self.mac, out=self.printed.append), 1)
 
-    def test_rejects_a_project_the_configuration_does_not_have(self):
-        code, errors = self.main("blog", LIVE, configuration=config.Config("warp", (self.project,)))
+        self.assertEqual(
+            [live_view.plain(line) for line in self.printed if line],
+            ["Session cse_01AAA is not running on this Mac."],
+        )
 
-        self.assertEqual(code, 2)
-        self.assertIn('no project "blog"', errors)
+    def test_a_view_the_user_interrupts_ends_quietly(self):
+        def interrupted():
+            raise KeyboardInterrupt
+
+        self.mac.processes = interrupted
+
+        self.assertEqual(live_view.view(self.project, LIVE, self.mac, out=self.printed.append), 0)
 
 
 if __name__ == "__main__":

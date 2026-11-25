@@ -19,6 +19,7 @@ ENDED_ELSEWHERE = (
 )
 SHOP = standins.project("shop", "/srv/shop", mode="plan", prefix="Shop")
 CLAUDE = "/tools/claude"
+PORCHLIGHT = "/tools/porchlight"
 SETTINGS = "/state/projects/shop/settings.json"
 
 
@@ -256,7 +257,7 @@ class Match(unittest.TestCase):
 
 class CommandLine(unittest.TestCase):
     def test_a_new_session_has_its_id_no_name_and_remote_control(self):
-        command = ready_sessions.command_line(SHOP, A, False, CLAUDE, SETTINGS)
+        command = ready_sessions.command_line(SHOP, A, False, CLAUDE, SETTINGS, PORCHLIGHT)
 
         self.assertTrue(command.startswith("exec "))
         self.assertIn(f" --session-id {A} ", command)
@@ -266,7 +267,7 @@ class CommandLine(unittest.TestCase):
         self.assertNotIn("--resume", command)
 
     def test_a_reopened_session_resumes_the_same_conversation(self):
-        command = ready_sessions.command_line(SHOP, A, True, CLAUDE, SETTINGS)
+        command = ready_sessions.command_line(SHOP, A, True, CLAUDE, SETTINGS, PORCHLIGHT)
 
         self.assertIn(f" --resume {A} ", command)
         self.assertNotIn("--session-id", command)
@@ -275,7 +276,7 @@ class CommandLine(unittest.TestCase):
     def test_a_hidden_session_starts_detached_in_its_worktree_from_a_login_shell(self):
         worktree = "/srv/shop/.claude/worktrees/porchlight-shop-aaaaaaaa"
 
-        words = ready_sessions.hidden_start(SHOP, A, worktree, tmux(), CLAUDE, SETTINGS)
+        words = ready_sessions.hidden_start(SHOP, A, worktree, tmux(), CLAUDE, SETTINGS, PORCHLIGHT)
 
         self.assertEqual(Path(words[0]).name, "tmux")
         self.assertEqual(words[words.index("-L") + 1], standins.TMUX_SERVER, "its own server, not the user's tmux")
@@ -284,7 +285,18 @@ class CommandLine(unittest.TestCase):
         self.assertEqual(words[words.index("-c") + 1], worktree)
         shell = shlex.split(words[-1])
         self.assertEqual(shell[:2], ["/bin/zsh", "-lic"])
-        self.assertEqual(shell[2], ready_sessions.command_line(SHOP, A, False, CLAUDE, SETTINGS))
+        self.assertEqual(shell[2], ready_sessions.command_line(SHOP, A, False, CLAUDE, SETTINGS, PORCHLIGHT))
+
+    def test_a_session_that_comes_back_hidden_resumes_its_conversation_the_same_way(self):
+        worktree = "/srv/shop/.claude/worktrees/porchlight-shop-aaaaaaaa"
+
+        words = ready_sessions.hidden_start(SHOP, A, worktree, tmux(), CLAUDE, SETTINGS, PORCHLIGHT, resume=True)
+
+        self.assertEqual(words[words.index("-s") + 1], "shop-aaaaaaaa")
+        self.assertEqual(words[words.index("-c") + 1], worktree)
+        self.assertEqual(
+            shlex.split(words[-1])[2], ready_sessions.command_line(SHOP, A, True, CLAUDE, SETTINGS, PORCHLIGHT)
+        )
 
     def test_the_tab_of_a_hidden_session_attaches_to_exactly_that_session(self):
         self.assertEqual(
@@ -295,7 +307,7 @@ class CommandLine(unittest.TestCase):
 
     def test_the_process_list_recognizes_what_it_starts(self):
         for resume in (False, True):
-            words = ready_sessions.command_line(SHOP, A, resume, CLAUDE, SETTINGS)[len("exec ") :].replace("'", "")
+            words = ready_sessions.command_line(SHOP, A, resume, CLAUDE, SETTINGS, PORCHLIGHT)[len("exec ") :].replace("'", "")
             self.assertEqual(ready_sessions.running(f"401 {words}\n"), {A: 401})
 
 

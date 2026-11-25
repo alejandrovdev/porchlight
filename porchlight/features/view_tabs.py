@@ -18,26 +18,37 @@ import subprocess
 from pathlib import Path
 
 from .. import names
-from ..atoms import transcripts, worktrees
+from ..atoms import processes, transcripts, worktrees
 from . import live_view
 
 STATE = "view-tabs"
 MAX_ATTEMPTS = 3
 
 
+def runs_the_tool(words, index):
+    """Whether the word at `index` of a process's command is the tool being run: its
+    installed command, by its path, or its module after an interpreter's `-m`."""
+    word = words[index]
+    if "/" in word:
+        return Path(word).name == names.TOOL
+    return (
+        word == names.TOOL
+        and index >= 2
+        and words[index - 1] == "-m"
+        and Path(words[index - 2]).name.lower().startswith("python")
+    )
+
+
 def views(ps_text):
     """The sessions whose view is running in some tab."""
     viewing = set()
-    for line in ps_text.splitlines():
-        words = line.split()
-        if not words or not words[0].isdigit():
-            continue
-        for index in range(2, len(words) - 3):
+    for _, program, arguments in processes.rows(ps_text):
+        words = [program] + arguments
+        for index in range(len(words) - 3):
             if (
-                words[index] == "-m"
-                and words[index + 1] == live_view.MODULE
-                and Path(words[index - 1]).name.lower().startswith("python")
+                words[index + 1] == live_view.COMMAND
                 and live_view.SESSION.fullmatch(words[index + 3])
+                and runs_the_tool(words, index)
             ):
                 viewing.add(words[index + 3])
     return viewing
@@ -88,7 +99,7 @@ def open_tab(project, session, mac, wait=8.0):
             names.view_tab(project, session),
             title,
             str(Path.home()),
-            live_view.command(project, session, mac.python),
+            live_view.command(project, session, mac.porchlight),
             lambda: session in views(mac.processes()),
             attempts=2,
             patience=8,

@@ -1,4 +1,5 @@
-"""The processes of the Mac: the list, its lines, one process's command, ending one."""
+"""The processes of the Mac: the list, its lines, one process's command, ending one, and
+what a command prints."""
 
 import os
 import signal
@@ -26,6 +27,15 @@ def command_of(pid, run=subprocess.run):
         return run([PS, "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def output(words, run=subprocess.run):
+    """What a command prints; None when it cannot be run or it fails."""
+    try:
+        answer = run(list(words), capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return answer.stdout if answer.returncode == 0 else None
 
 
 def terminate(pid):

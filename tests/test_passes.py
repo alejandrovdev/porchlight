@@ -12,7 +12,7 @@ from unittest import mock
 
 from porchlight import config, names, passes
 from porchlight.atoms import transcripts
-from porchlight.features import live_view, ready_sessions, resume_list, view_tabs
+from porchlight.features import ready_sessions, resume_list, view_tabs
 from tests import standins
 
 A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -67,7 +67,7 @@ class Scratch(unittest.TestCase):
             return standins.result(stdout="4242\n")
 
     def tab_opens(self, tab):
-        if live_view.MODULE in tab.command:
+        if tab.name.startswith("porchlight_view_"):
             self.mac.ps += "401 " + tab.command[len("exec ") :] + "\n"
 
     def server_session(self, project, session, pid):
@@ -255,6 +255,77 @@ class TwoProjects(Scratch):
         self.assertEqual(
             sorted(path.name for path in (self.root / "state" / "projects").iterdir()), ["blog", "shop"]
         )
+
+
+class RepeatedLines(Scratch):
+    def test_a_folder_that_stays_missing_is_logged_once_and_again_when_something_else_happened(self):
+        shop, blog = self.project("shop", make=False), self.project("blog", features=("server",))
+        configuration = config.Config("warp", (shop, blog))
+
+        for _ in range(3):
+            passes.run(configuration, self.mac)
+
+        self.assertEqual(self.mac.log_text(shop).count("is missing"), 1)
+
+        self.mac.log(shop, "something else")
+        self.mac.log(blog, "skipped: the folder %s is missing" % shop.directory)
+        passes.run(configuration, self.mac)
+
+        self.assertEqual(self.mac.log_text(shop).count("is missing"), 2, "it is said again once the message changed")
+        self.assertEqual(self.mac.log_text(blog).count("is missing"), 1, "each project has its own log")
+
+
+class Status(Scratch):
+    def status(self, *projects, terminal="warp"):
+        printed = []
+        code = passes.status(config.Config(terminal, projects), self.mac, out=printed.append)
+        return code, printed
+
+    def test_prints_every_project_under_its_name_and_server_sessions_only_where_the_server_is_on(self):
+        shop, blog = self.project("shop"), self.project("blog", features=("ready-session",))
+        self.server_session(shop, SHOP_LIVE, 101)
+        self.ready_session(blog, A, "used", 301, prompt="Fix the footer")
+
+        code, printed = self.status(shop, blog)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(printed[0], "shop")
+        self.assertEqual(printed[1], "  Ready sessions, with Claude Code's interface:")
+        self.assertEqual(printed[2], "    No session with Claude Code's interface yet.")
+        self.assertEqual(printed[3], "  Sessions the server started, with a read-only view:")
+        self.assertRegex(printed[4], r"^    cse_01AAA  pid 101 +no tab yet +Shop · Fix the header$")
+        self.assertEqual(printed[5:8], ["", "blog", "  Ready sessions, with Claude Code's interface:"])
+        self.assertRegex(printed[8], r"^    aaaaaaaa  used .* Fix the footer  \(pid 301, not in the app yet, hidden\)$")
+        self.assertEqual(printed[9], "        /tools/tmux -L porchlight-test -u attach-session -t '=blog-aaaaaaaa'")
+        self.assertEqual(len(printed), 10, "a project without the server has no server sessions to show")
+
+    def test_without_a_project_says_so_and_how_to_add_one(self):
+        code, printed = self.status()
+
+        self.assertEqual(code, 0)
+        self.assertEqual(printed, ["No project is configured. Add one with: porchlight setup"])
+
+    def test_says_when_a_projects_folder_is_missing_and_still_shows_the_next_project(self):
+        shop, blog = self.project("shop", make=False), self.project("blog", features=("ready-session",))
+
+        code, printed = self.status(shop, blog)
+
+        self.assertEqual(code, 1, "something needs attention")
+        self.assertEqual(printed[1], "  The folder %s is missing." % shop.directory)
+        self.assertIn("blog", printed)
+
+    def test_a_project_whose_sessions_cannot_be_read_does_not_hide_the_next(self):
+        shop, blog = self.project("shop", features=("ready-session",)), self.project("blog", features=("ready-session",))
+        self.ready_session(shop, A, "used", 301)
+        del self.mac.tmux  # tmux is not installed: the command that attaches cannot be named
+        del self.mac.found["tmux"]
+
+        code, printed = self.status(shop, blog)
+
+        self.assertEqual(code, 1)
+        self.assertTrue(any("tmux was not found" in line for line in printed), printed)
+        self.assertEqual(printed[-3:], ["blog", "  Ready sessions, with Claude Code's interface:",
+                                        "    No session with Claude Code's interface yet."])  # fmt: skip
 
 
 if __name__ == "__main__":

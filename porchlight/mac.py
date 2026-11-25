@@ -7,13 +7,12 @@ passes a Mac whose parts are stand-ins.
 """
 
 import os
-import sys
 import time
 from functools import cached_property
 from pathlib import Path
 
 from . import names
-from .atoms import logs, processes, terminal, tmux, tools, transcripts, worktrees
+from .atoms import invocation, logs, processes, terminal, tmux, tools, transcripts, worktrees
 from .atoms.state import Store
 
 
@@ -53,9 +52,10 @@ class Mac:
         )
 
     @cached_property
-    def python(self):
-        """The interpreter that runs porchlight, for what a tab runs."""
-        return sys.executable
+    def porchlight(self):
+        """The command that runs porchlight, as a shell reads it: what a tab runs and what
+        a session is told to run. The installed command, else this very copy."""
+        return invocation.shell(*invocation.words(names.TOOL, path=self.environ.get("PATH")))
 
     @property
     def transcripts(self):
@@ -67,6 +67,10 @@ class Mac:
 
     def command_of(self, pid):
         return processes.command_of(pid)
+
+    def output(self, words):
+        """What a command prints, such as a tool's help; None when it cannot be run."""
+        return processes.output(words)
 
     def terminate(self, pid):
         processes.terminate(pid)

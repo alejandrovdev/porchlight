@@ -5,7 +5,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from porchlight import names
@@ -50,11 +50,12 @@ class Scratch(unittest.TestCase):
             lines.append(self.line("user", SOURCE_ID, "sdk-cli", uuid=f"u{index}"))
         return lines
 
-    def run_command(self, *arguments):
-        output, errors = io.StringIO(), io.StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
-            code = resume_list.main(list(arguments), self.project, self.mac)
-        return standins.result(code, output.getvalue(), errors.getvalue())
+    def run_command(self, command):
+        """What a pass does ("sync") or what the list prints ("list"), with what it printed."""
+        output = io.StringIO()
+        with redirect_stdout(output):
+            {"sync": resume_list.sync, "list": resume_list.list_copies}[command](self.project, self.mac)
+        return standins.result(0, output.getvalue())
 
     def copies(self):
         return sorted(self.main.glob("*.jsonl"))
@@ -153,7 +154,7 @@ class ResumeList(Scratch):
 
         self.assertEqual(self.copies(), [])
 
-    def test_exits_zero_and_logs_when_a_transcript_cannot_be_read(self):
+    def test_goes_on_when_a_transcript_cannot_be_read(self):
         self.source.write_bytes(b"\xff\xfe not text\n")
 
         result = self.run_command("sync")
@@ -173,12 +174,6 @@ class ResumeList(Scratch):
         self.assertIn("Fix the header", result.stdout)
         self.assertIn(f"claude --resume {copy.stem}", result.stdout)
         self.assertIn("worktree removed", result.stdout)
-
-    def test_rejects_an_unknown_command(self):
-        result = self.run_command("frobnicate")
-
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("usage", result.stderr)
 
 
 if __name__ == "__main__":

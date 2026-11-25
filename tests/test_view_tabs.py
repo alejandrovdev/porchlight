@@ -59,12 +59,23 @@ class LiveSessions(unittest.TestCase):
 
     def test_finds_the_sessions_that_already_have_a_view(self):
         ps = (
-            f"201 /usr/bin/python3 -m porchlight.features.live_view shop {LIVE}\n"
-            f"202 /bin/zsh -c grep porchlight.features.live_view shop {OTHER} somewhere\n"
-            "203 /usr/bin/python3 -m porchlight.features.live_view\n"
+            f"201 /usr/bin/python3 -m porchlight view shop {LIVE}\n"
+            f"202 /bin/zsh -c grep porchlight view shop {OTHER} somewhere\n"
+            "203 /usr/bin/python3 -m porchlight view\n"
+            f"204 /usr/bin/python3 -m porchlight status shop {OTHER}\n"
+            f"205 /usr/bin/python3 -m another view shop {OTHER}\n"
         )
 
         self.assertEqual(view_tabs.views(ps), {LIVE})
+
+    def test_finds_a_view_the_installed_command_runs(self):
+        ps = (
+            f"201 /opt/homebrew/bin/porchlight view shop {LIVE}\n"
+            f"202 /opt/homebrew/bin/python3.13 /opt/homebrew/bin/porchlight view blog {OTHER}\n"
+            "203 /opt/homebrew/bin/porchlight status\n"
+        )
+
+        self.assertEqual(view_tabs.views(ps), {LIVE, OTHER})
 
 
 class Transcript(unittest.TestCase):
