@@ -447,6 +447,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 | `deinit [folder]` | `--yes` | Unlink a project's folder; sessions in use stay. |
 | `status` | | Print the sessions of every project. |
 | `reopen [name]` | `--project <name>` | Open a closed session again, back online in the app. Without a name, list the closed ones. |
+| `retry` | `--project <name>` | After a free session failed to start, clear the wait before the next try, for every project with `ready-session` or the one named. The service tries at its next pass, within 20 seconds. |
 | `doctor` | | Check what each project needs on this Mac, and say what to do about what is missing. |
 | `view <project> <session>` | | Follow a session the server started (`cse_...`), read-only. What a `live-view` tab runs. |
 | `resume-list [sync]` | | List the `/resume` copies of the server's sessions, with the command that resumes each. `sync` brings them up to date first. |
@@ -610,7 +611,10 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
   `no base branch is known`, set `base` for the project, or record the default branch of
   `origin` with `git remote set-head origin --auto`. After `no free session started (N in a
   row)`, porchlight waits before trying again: two minutes after the first failure, twice as
-  long after each next one, at most an hour.
+  long after each next one, at most an hour. `status` then says, under the project's ready
+  sessions, how many attempts failed and when the next one comes. Once the cause is fixed,
+  `porchlight retry --project <name>` clears the wait. It starts nothing itself and does not
+  wake the service: the service tries at its next pass, within 20 seconds.
 - If the session runs but `status` says `not in the app yet`, its transcript does not name a
   Remote Control session yet. Check that Claude Code is signed in and that your plan
   includes Remote Control.
