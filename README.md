@@ -207,8 +207,8 @@ porchlight runs as a service, `porchlight run`, under a login agent: launchd sta
 you log in and starts it again if it ends. It reads the configuration file, keeps the
 sessions of each project running, and follows what happens in them by reading the
 transcripts Claude Code writes. Each project with the `server` feature has a login agent of
-its own, which runs that project's Remote Control server (`porchlight server <project>`) in
-its repository. porchlight never talks to Claude's servers itself: every session is an
+its own, which runs that project's Remote Control server
+(`porchlight server <project> --permission-mode <mode>`) in its repository. porchlight never talks to Claude's servers itself: every session is an
 ordinary `claude` process, connected through Remote Control.
 
 ```mermaid
@@ -426,7 +426,7 @@ The service reads the file on every pass, so a change to a project's features ta
 at its next pass. `apply` is what adds or removes the background agents: run it after you
 add or remove a project or its `server` feature. It also installs the session settings of
 projects that have no running server. A server that is running keeps the permission mode it
-started with: see [Running and stopping](#running-and-stopping).
+started with until `apply --servers` restarts it: see [Running and stopping](#running-and-stopping).
 
 ## Commands
 
@@ -448,7 +448,7 @@ Every command takes `--config <file>` (before or after its name) and `-h` or `--
 | `stop` | `--servers` | Unload the service until `start` or the next login. Sessions already running keep running. |
 | `uninstall` | `--servers`, `--purge` | Remove the agents and end the free sessions. Sessions in use keep running. |
 | `run` | `--once` | The service itself, what its login agent runs. `--once` makes one pass and exits. |
-| `server <project>` | | A project's Remote Control server, what its login agent runs. |
+| `server <project>` | `--permission-mode <mode>` | A project's Remote Control server, what its login agent runs. Without `--permission-mode`, it runs in the project's mode. |
 
 You do not need to type `run` or `server`: the login agents run them.
 
@@ -480,14 +480,13 @@ You do not need to type `run` or `server`: the login agents run them.
 - `apply` never loads a second server into a folder that a running server already serves.
   After renaming a project, for example, it says that the old name's server still runs
   there; `porchlight apply --servers` replaces it.
-- A server's definition is its command, folder and environment; changing a project's
-  permission mode does not change it. **A running server keeps the permission mode it
-  started with**, and neither `apply` nor `apply --servers` restarts it for a new one. To
-  have it use the new mode, restart it (its sessions end):
+- A server's definition is its command, with the project's permission mode, its folder and
+  its environment. After you change a project's permission mode, `apply` (and `init`) say
+  that the running server was left as it is, though its definition changed: **it keeps the
+  mode it started with**. To have it use the new mode, restart it (its sessions end):
 
   ```sh
-  porchlight stop --servers
-  porchlight start
+  porchlight apply --servers
   ```
 
   Ready sessions use the new mode from the next one prepared.
@@ -540,7 +539,7 @@ deletes only inside folders that have it. The worktrees of the server's sessions
 | Label | Runs | When |
 | --- | --- | --- |
 | `io.github.alejandrovdev.porchlight` | `porchlight run` | while the configuration has at least one project |
-| `io.github.alejandrovdev.porchlight.server.<project>` | `porchlight server <project>`, in the project's folder | for each project with `server` |
+| `io.github.alejandrovdev.porchlight.server.<project>` | `porchlight server <project> --permission-mode <mode>`, in the project's folder | for each project with `server` |
 
 Both start at login and start again when they end (a server waits 30 seconds between two
 starts). Their files carry the `PATH` folders of the tools porchlight found and any

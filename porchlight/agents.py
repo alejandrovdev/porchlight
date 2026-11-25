@@ -8,7 +8,8 @@
 
 One agent, the service, keeps the sessions of every project (`porchlight run`); it exists
 exactly while the configuration has a project. Each project with the `server` feature has
-an agent of its own (`porchlight server <project>`).
+an agent of its own (`porchlight server <project> --permission-mode <mode>`): the mode is in
+its definition, so a new one is a change.
 
 A server that runs is never stopped, restarted or removed unless asked with `servers`: the
 app cannot start again the sessions that would end with it. `apply` takes `servers` as True
@@ -108,7 +109,8 @@ def wanted(configuration, mac):
         if project.has("server"):
             server = launchd.definition(
                 names.server_label(project.name, environ),
-                words + [names.SERVER_AGENT, project.name],
+                # The mode is part of the definition, so that a new one is a change `apply` sees.
+                words + [names.SERVER_AGENT, project.name, names.SERVER_MODE, project.permission_mode],
                 environment,
                 os.path.abspath(names.server_log(project, environ)),
                 directory=names.repository(project),
@@ -173,11 +175,14 @@ def refused(mac, out):
 def runs_the_tool(label, told, environ=None):
     """Whether a definition is one this tool writes for one of its labels: its arguments
     end with `run` for the service and with `server <project>` for that project's server,
-    and name the tool before that."""
+    followed or not by `--permission-mode <mode>` (earlier versions left it out), and name
+    the tool before that."""
     words = told.get("ProgramArguments") if isinstance(told, dict) else None
     if not isinstance(words, list) or not all(isinstance(word, str) for word in words):
         return False
     project = names.served(label, environ)
+    if project and len(words) > 2 and words[-2] == names.SERVER_MODE:
+        words = words[:-2]
     ending = [names.SERVER_AGENT, project] if project else ["run"]
     if len(words) <= len(ending) or words[-len(ending) :] != ending:
         return False

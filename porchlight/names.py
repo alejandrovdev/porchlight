@@ -19,6 +19,7 @@ from pathlib import Path
 TOOL = "porchlight"
 LABEL = "io.github.alejandrovdev." + TOOL  # the address the tool is published at, reversed
 SERVER_AGENT = "server"  # what a label says between the tool's own and a project's name
+SERVER_MODE = "--permission-mode"  # what a server's agent names the mode it runs in with
 SHORT = 8  # how much of a session's id a name carries
 SERVER_SESSION = "cse_"  # how the id of a session the server starts begins
 MARKER = "." + TOOL  # the file in a folder the tool made: only there does a purge delete

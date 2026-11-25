@@ -432,6 +432,24 @@ class Server(CommandLine):
         self.assertEqual(words[words.index("--settings") + 1], str(settings))
         self.assertEqual(self.mac.spawned, [], "keeping the Mac awake is the service's")
 
+    def test_runs_in_the_permission_mode_its_agent_names(self):
+        (shop,) = self.configure(shop=("server",))
+        settings = self.mac.settings(shop)
+
+        self.assertEqual(self.become("shop", "--permission-mode", "acceptEdits"), 0)
+
+        words = self.execve.call_args.args[1]
+        self.assertEqual(words[words.index("--permission-mode") + 1], "acceptEdits")
+        self.assertEqual(json.loads(settings.read_text())["permissions"]["defaultMode"], "acceptEdits")
+
+    def test_without_a_permission_mode_runs_in_the_projects(self):
+        (shop,) = self.configure(shop=("server",))
+
+        self.assertEqual(self.become("shop"), 0)
+
+        words = self.execve.call_args.args[1]
+        self.assertEqual(words[words.index("--permission-mode") + 1], "plan")
+
     def test_refuses_a_project_the_configuration_does_not_have(self):
         self.configure(shop=("server",))
 

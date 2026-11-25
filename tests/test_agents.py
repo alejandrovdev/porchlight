@@ -183,7 +183,7 @@ class Wanted(OnTheMac):
         server = agents.wanted(configuration, self.mac)[1].definition
 
         self.assertEqual(server["Label"], SHOP)
-        self.assertEqual(server["ProgramArguments"], ["/tools/porchlight", "server", "shop"])
+        self.assertEqual(server["ProgramArguments"], ["/tools/porchlight", "server", "shop", "--permission-mode", "plan"])
         self.assertEqual(server["WorkingDirectory"], str(names.repository(configuration.project("shop"))))
         self.assertIs(server["RunAtLoad"], True)
         self.assertIs(server["KeepAlive"], True)
@@ -306,6 +306,49 @@ class Apply(OnTheMac):
                 CHECK,
             ],
         )
+
+    def moded(self, configuration, **modes):
+        """The configuration with the permission modes given, by project."""
+        projects = tuple(dataclasses.replace(p, permission_mode=modes.get(p.name, p.permission_mode)) for p in configuration.projects)
+        return dataclasses.replace(configuration, projects=projects)
+
+    def test_a_new_permission_mode_changes_a_servers_definition_and_its_running_server_is_left_as_it_is(self):
+        self.apply(self.both)
+        written = self.definition(SHOP)
+        self.mac.launchctl.calls.clear()
+
+        self.assertEqual(self.apply(self.moded(self.both, shop="acceptEdits")), 0)
+
+        self.assertEqual(self.mac.launchctl.did(), [])
+        self.assertEqual(self.definition(SHOP), written)
+        self.assertEqual(
+            self.printed[1:3],
+            [SHOP + ": left running as it is, though its definition changed", BLOG + ": already loaded, nothing changed"],
+        )
+
+    def test_with_servers_a_new_permission_mode_restarts_the_server_with_it(self):
+        self.apply(self.both)
+        self.mac.launchctl.calls.clear()
+
+        self.assertEqual(self.apply(self.moded(self.both, shop="acceptEdits"), servers=["shop"]), 0)
+
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SHOP), ("load", SHOP)])
+        self.assertEqual(self.definition(SHOP)["ProgramArguments"][-2:], ["--permission-mode", "acceptEdits"])
+        self.assertEqual(self.printed[1], SHOP + ": restarted with its new definition")
+
+    def test_a_server_loaded_from_a_file_without_its_permission_mode_is_the_tools_and_counts_as_changed(self):
+        self.apply(self.both)
+        earlier = self.definition(SHOP)
+        earlier["ProgramArguments"] = earlier["ProgramArguments"][:-2]
+        launchd.write(launchd.file(self.folder, SHOP), earlier)
+        self.mac.launchctl.calls.clear()
+
+        self.assertEqual(self.apply(self.both), 0)
+        self.assertEqual(self.mac.launchctl.did(), [])
+        self.assertEqual(self.printed[1], SHOP + ": left running as it is, though its definition changed")
+
+        self.assertEqual(self.apply(self.both, servers=True), 0)
+        self.assertEqual(self.mac.launchctl.did(), [("unload", SHOP), ("load", SHOP)])
 
     def test_a_loaded_server_the_configuration_no_longer_has_is_left_as_it_is_and_said(self):
         self.apply(self.both)
@@ -1037,7 +1080,8 @@ class OneServerForAFolder(OnTheMac):
 
     def test_a_changed_server_is_not_restarted_into_the_folder_of_one_that_did_not_unload(self):
         stale = dict(launchd.read(launchd.file(self.folder, SHOP)), Label=self.STORE, ThrottleInterval=1)
-        stale["ProgramArguments"] = stale["ProgramArguments"][:-1] + ["store"]
+        words = stale["ProgramArguments"]
+        stale["ProgramArguments"] = words[: words.index("shop")] + ["store"] + words[words.index("shop") + 1 :]
         launchd.write(launchd.file(self.folder, self.STORE), stale)
         self.mac.launchctl.loaded.add(self.STORE)
         self.mac.launchctl.stuck.add(SHOP)
@@ -1247,7 +1291,12 @@ class OwnFiles(OnTheMac):
             ("/tools/porchlight", "run"): [SERVICE_LABEL],
             ("/some/python3", "-m", "porchlight", "run"): [SERVICE_LABEL],
             ("/tools/porchlight", "server", "shop"): [SHOP],
+            ("/tools/porchlight", "server", "shop", "--permission-mode", "plan"): [SHOP],
             ("/tools/porchlight", "server", "blog"): [],  # another project's
+            ("/tools/porchlight", "server", "blog", "--permission-mode", "plan"): [],
+            ("/tools/porchlight", "server", "shop", "--other", "plan"): [],
+            ("/tools/porchlight", "server", "shop", "--permission-mode"): [],
+            ("/tools/porchlight", "run", "--permission-mode", "plan"): [],
             ("/tools/porchlight", "run", "--once"): [],
             ("/tools/another", "run"): [],
             ("run",): [],

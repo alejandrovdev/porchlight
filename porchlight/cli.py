@@ -12,7 +12,7 @@
     start, stop [--servers]    load the agents that are installed, unload the service
     uninstall [--servers] [--purge]   remove the agents and let go of the free sessions
     run [--once]               the service: keep the sessions of every project
-    server <project>           a project's server (what its background agent runs)
+    server <project> [--permission-mode <mode>]   a project's server (what its agent runs)
 
 Every command reads the configuration file (`--config <file>`, else the default one) and
 exits with 0 when it did what was asked, 1 when it refused or something needs attention,
@@ -26,6 +26,7 @@ calls.
 """
 
 import argparse
+import dataclasses
 import os
 import sys
 from pathlib import Path
@@ -100,6 +101,9 @@ def serve_project(chosen, configuration, mac, out):
     if not project.has("server"):
         out('The project "%s" does not have the server feature: it has no server to run.' % project.name)
         return 1
+    if chosen.permission_mode:
+        # What its agent was loaded with: a new mode waits until `apply --servers` restarts it.
+        project = dataclasses.replace(project, permission_mode=chosen.permission_mode)
     project_server.run(project, mac)  # this process is the server from here on
     return 0
 
@@ -284,6 +288,12 @@ def parser():
         names.SERVER_AGENT, serve_project, "Become a project's server: what its background agent runs."
     )
     serving.add_argument("project", help="the project's name in the configuration")
+    serving.add_argument(
+        names.SERVER_MODE,
+        dest="permission_mode",
+        metavar="<mode>",
+        help="the permission mode to run in, which its agent names; else the project's",
+    )
     # apply, start, stop and uninstall refuse root themselves (`agents`); these delete files too.
     for deleting in (running, serving):
         deleting.set_defaults(not_as_root=True)
