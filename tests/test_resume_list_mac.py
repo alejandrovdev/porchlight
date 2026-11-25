@@ -2,8 +2,10 @@
 and names, and one failure that never stops the rest."""
 
 import json
+import shlex
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from porchlight import config
 from porchlight.features import resume_list
@@ -71,8 +73,23 @@ class OnTheMac(Scratch):
         resume_list.list_copies(self.project, self.mac, out=printed.append)
 
         self.assertIn("worktree kept", printed[0])
-        self.assertEqual(printed[1], "    cd '%s' && claude --resume %s" % (self.repo + WORKTREE, copy.stem))
+        self.assertEqual(printed[1], "    cd %s && claude --resume %s" % (shlex.quote(self.repo + WORKTREE), copy.stem))
         self.assertIn("live on the phone", printed[6])
+
+    def test_quotes_the_folder_and_prints_the_prompt_printable(self):
+        self.source.write_text(
+            self.line("queue-operation", SOURCE_ID, operation="enqueue", content="Fix \x1b[2J the caf\u00e9 😀")
+            + self.line("user", SOURCE_ID, "sdk-cli", uuid="u0", cwd="/srv/it's here/" + WORKTREE)
+        )
+        resume_list.sync(self.project, self.mac)
+        (copy,) = self.copies()
+        printed = []
+
+        with mock.patch("pathlib.Path.is_dir", return_value=True):
+            resume_list.list_copies(self.project, self.mac, out=printed.append)
+
+        self.assertIn("worktree kept      Fix \ufffd[2J the café 😀", printed[0])
+        self.assertEqual(printed[1], "    cd '/srv/it'\"'\"'s here/%s' && claude --resume %s" % (WORKTREE, copy.stem))
 
     def test_says_when_there_is_no_copy(self):
         printed = []

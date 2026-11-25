@@ -182,6 +182,17 @@ class Status(OnTheMac):
         self.assertIn("tab closed by the user", self.printed[1])
         self.assertIn("tab open", self.printed[2])
 
+    def test_prints_and_logs_the_first_prompt_printable(self):
+        self.write_transcript({"type": "queue-operation", "content": "Fix \x1b[2J the caf\u00e9"})
+        self.terminal.on_open = self.view_starts
+
+        view_tabs.status(self.project, self.mac, out=self.printed.append)
+        view_tabs.open_tab(self.project, LIVE, self.mac)
+
+        self.assertRegex(self.printed[0], r"^cse_01AAA  pid 101 +no tab yet +Shop · Fix \ufffd\[2J the café$")
+        self.assertEqual(self.terminal.tabs[0].title, "Shop · Fix \ufffd[2J the café")
+        self.assertIn("opened a tab for cse_01AAA (Shop · Fix \ufffd[2J the café)", self.mac.log_text(self.project))
+
     def test_says_when_no_server_session_runs(self):
         self.mac.ps = ""
 
@@ -224,6 +235,16 @@ class Follow(OnTheMac):
                 "The session ended (archived). Closing this tab.",
             ],
         )
+
+    def test_prints_no_control_sequence_the_model_wrote(self):
+        self.write_transcript(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Done\x1b]52;c;b3duZWQ=\x07 \x1b[2J"}]}},
+        )
+
+        self.follow()
+
+        self.assertIn("Done\ufffd]52;c;b3duZWQ=\ufffd \ufffd[2J", self.shown())
+        self.assertEqual([line for line in self.shown() if "\x1b" in line or "\x07" in line], [])
 
     def test_stays_open_while_ps_cannot_tell(self):
         self.mac.commands[101] = None

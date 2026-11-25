@@ -1,5 +1,5 @@
 """Tests of the atoms: the process list, transcripts, git worktrees, tmux, the terminal's
-tab opener, the state file, the log and how the tool is named in a command. Each runs
+tab opener, the state file, the log, text from a session made printable and how the tool is named in a command. Each runs
 against scratch folders and stand-ins."""
 
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import porchlight
 from porchlight import config
-from porchlight.atoms import invocation, logs, processes, state, terminal, tmux, transcripts, worktrees
+from porchlight.atoms import invocation, logs, processes, state, terminal, text, tmux, transcripts, worktrees
 from tests import standins
 
 
@@ -430,6 +430,24 @@ class AppleTerminal(unittest.TestCase):
         self.assertEqual(len(runner.calls), 1)
 
 
+class Text(unittest.TestCase):
+    def test_ordinary_text_is_left_as_it_is(self):
+        for ordinary in ("Fix the header", "Café niño über", "😀 👨‍👩‍👧 ❤️ 🇦🇷", "日本語 العربية", "a  b"):
+            self.assertEqual(text.printable(ordinary), ordinary)
+
+    def test_each_control_character_is_replaced_and_half_characters_are_dropped(self):
+        self.assertEqual(text.printable("a\x1b[31mred\x07\x00\x7f\x9b2J"), "a\ufffd[31mred\ufffd\ufffd\ufffd\ufffd2J")
+        self.assertEqual(text.printable("line\rover\ttab\nnext"), "line\ufffdover\ufffdtab\ufffdnext")
+        self.assertEqual(text.printable("half \ud83d of \ude00 one"), "half  of  one")
+
+    def test_on_one_line_white_space_is_one_space(self):
+        self.assertEqual(text.one_line("  Fix the\nheader\r\n\tnow 😀 "), "Fix the header now 😀")
+        self.assertEqual(text.one_line("Fix \ud83d the \x1b[2J header"), "Fix the \ufffd[2J header")
+
+    def test_the_characters_asked_for_are_kept(self):
+        self.assertEqual(text.printable("a\tb\nc\x1bd\re", keep="\t\n"), "a\tb\nc\ufffdd\ufffde")
+
+
 class State(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
@@ -458,6 +476,25 @@ class State(unittest.TestCase):
             ["ready-sessions.json", "ready-sessions.lock"],
             "the lock beside it, no draft left",
         )
+
+    def test_text_that_is_not_ascii_is_stored_as_it_is(self):
+        self.store.save({"sessions": {"a": {"title": "Café 😀 niño", "prompt": "日本語"}}})
+
+        written = self.store.path.read_text(encoding="utf8")
+        self.assertIn('"title": "Café 😀 niño"', written)
+        self.assertIn('"prompt": "日本語"', written)
+
+    def test_half_a_character_from_a_transcript_never_stops_a_save(self):
+        # JSON lets a transcript hold a lone surrogate (half an emoji); no file can take it.
+        table = {"sessions": {"a": {"title": "Fix \ud83d", "prompt": "plain"}}}
+
+        self.store.save(table)
+
+        written = self.store.path.read_bytes()
+        written.decode("utf8")  # the file is UTF-8 all the same
+        self.assertIn(b'"title": "Fix \\ud83d"', written)
+        self.assertEqual(self.store.load({}), table, "it reads back as it was given")
+        self.assertEqual([path.name for path in self.store.path.parent.iterdir()], ["ready-sessions.json"])
 
     def test_one_holder_of_the_lock_at_a_time(self):
         import fcntl
@@ -560,6 +597,22 @@ class Logs(unittest.TestCase):
             text = path.read_text(encoding="utf8")
             self.assertEqual(text.count("no worktree: fatal\nhint: missing\n"), 2, "a message of two lines too")
             self.assertEqual(len(text.splitlines()), 5)
+
+
+    def test_text_from_a_session_is_written_printable_and_never_fails(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "shop.log"
+
+            logs.write(path, "opened the tab of aaaa (Fix \ud83d\x1b[2J the café 😀)")
+            logs.write(path, "opened the tab of aaaa (Fix \ud83d\x1b[2J the café 😀)")
+            logs.write(path, "failed:\tfatal\nhint: missing")
+
+            lines = path.read_bytes().decode("utf8").splitlines()
+            self.assertEqual(
+                [line[20:] for line in lines[:2]] + lines[2:],
+                ["opened the tab of aaaa (Fix \ufffd[2J the café 😀)", "failed:\tfatal", "hint: missing"],
+                "once, without the control character or the half character; tabs and lines kept",
+            )
 
 
 class Invocation(unittest.TestCase):

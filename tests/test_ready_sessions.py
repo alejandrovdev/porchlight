@@ -99,6 +99,27 @@ class Summarize(unittest.TestCase):
 
         self.assertEqual(ready_sessions.summarize(entries)["ended_at"], 1795558994.0)
 
+    def test_text_from_the_phone_is_kept_printable(self):
+        entries = [
+            {"type": "user", "message": {"content": "Fix \ud83d the \x1b]0;owned\x07 header 😀"}},
+            {"type": "custom-title", "customTitle": "Caf\u00e9 \x1b[2J\udc00 niño"},
+            {"type": "bridge-session", "bridgeSessionId": "cse_01\x1b[31m"},
+        ]
+
+        self.assertEqual(
+            ready_sessions.summarize(entries),
+            {
+                "prompt": "Fix the \ufffd]0;owned\ufffd header 😀",
+                "title": "Café \ufffd[2J niño",
+                "cse": "cse_01\ufffd[31m",
+                "ended_at": 0.0,
+            },
+        )
+        self.assertEqual(
+            ready_sessions.summarize([{"type": "ai-title", "aiTitle": "Header \x9b fix \ud83d"}])["title"],
+            "Header \ufffd fix",
+        )
+
     def test_an_empty_transcript_is_a_session_nobody_used(self):
         self.assertEqual(ready_sessions.summarize([]), ready_sessions.new_summary())
 

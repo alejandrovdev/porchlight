@@ -161,6 +161,7 @@ class TabConfig(unittest.TestCase):
         self.assertEqual(view_tabs.tab_title(SHOP, "Fix the\nheader", LIVE), "Shop · Fix the header")
         self.assertLessEqual(len(view_tabs.tab_title(SHOP, long_prompt, LIVE)), len("Shop · ") + 40)
         self.assertEqual(view_tabs.tab_title(SHOP, "", "cse_01ABCDEFGHJKMNPQRSTVWXYZ"), "Shop · TVWXYZ")
+        self.assertEqual(view_tabs.tab_title(SHOP, "Fix \x1b]0;x\x07 the café 😀\ud83d", LIVE), "Shop · Fix \ufffd]0;x\ufffd the café 😀")
 
 
 def message(kind, content, **extra):
@@ -213,6 +214,26 @@ class Render(unittest.TestCase):
         )
         self.assertEqual(live_view.render({"type": "attachment"}), [])
         self.assertEqual(live_view.render({"type": "user"}), [])
+
+    def test_control_characters_from_the_model_or_a_tool_are_replaced_and_tabs_and_lines_kept(self):
+        entry = message(
+            "assistant",
+            [
+                {"type": "text", "text": "Done \x1b]0;owned\x07 now\r\nnext\tcolumn \x9b2J café 😀 \ud83d"},
+                {"type": "tool_use", "name": "Bash\x1b[2J", "input": {"command": "printf '\x1b[31m'\rrm"}},
+            ],
+        )
+
+        self.assertEqual(
+            live_view.render(entry),
+            [
+                ("assistant", "Done \ufffd]0;owned\ufffd now\nnext\tcolumn \ufffd2J café 😀"),
+                ("tool", "Bash\ufffd[2J · printf '\ufffd[31m' rm"),  # a tool line is one line
+            ],
+        )
+        self.assertEqual(
+            live_view.render(message("user", "Fix \x1b[8m the header\x00")), [("user", "Fix \ufffd[8m the header\ufffd")]
+        )
 
     def test_reads_only_finished_lines(self):
         lines, rest = transcripts.finished_lines(b'{"a":1}\n{"b":2}\n{"c":')
