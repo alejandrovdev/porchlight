@@ -298,7 +298,9 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
   they end.
 - **`tabs`**: tabs open in the terminal you chose, and only while it is running:
   porchlight never starts it. In Warp each session gets a tab; in Terminal, a window.
-  A tab's title is the session prefix and the session's title or first prompt. Without
+  A tab's title is the session prefix and the session's title or first prompt; a Terminal
+  window shows instead the title the shell or the program sets (oh-my-zsh, Claude Code,
+  tmux), as Terminal does for any window. Without
   `tabs`, a session in use keeps running hidden, and `porchlight status` prints the command
   that shows it in a terminal.
 - **`live-view`**: the tab runs `porchlight view <project> <session>`. Nothing typed there
