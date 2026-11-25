@@ -948,6 +948,25 @@ class Status(OnTheMac):
 
         self.assertEqual(len(self.printed), 1)
 
+    def test_with_tabs_a_session_whose_tab_was_given_up_on_gets_the_command_that_attaches_to_it(self):
+        self.save(
+            {
+                A: self.record("used", title="Header on phones", shown=True, show_failures=3, tmux="shop-aaaaaaaa"),
+                # Its tab opened: closing the tab ends it, so it needs no command.
+                B: self.record("used", B, shown=True, tmux="shop-bbbbbbbb", changed=self.mac.now - 30),
+            }
+        )
+        self.mac.ps = "".join(
+            f"{pid} claude --session-id {session} --remote-control\n" for pid, session in ((301, A), (302, B))
+        )
+
+        ready_sessions.status(self.project, self.mac, out=self.printed.append)
+
+        self.assertRegex(self.printed[0], r"^aaaaaaaa  used .*, hidden\)$")
+        self.assertEqual(self.printed[1], "    /tools/tmux -L porchlight-test -u attach-session -t '=shop-aaaaaaaa'")
+        self.assertRegex(self.printed[2], r"^bbbbbbbb  used .* \(pid 302, not in the app yet\)$")
+        self.assertEqual(len(self.printed), 3)
+
     def test_says_when_there_is_none(self):
         ready_sessions.status(self.project, self.mac, out=self.printed.append)
 

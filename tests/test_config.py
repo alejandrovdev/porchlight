@@ -139,6 +139,16 @@ speed = "fast"
             ],
         )
 
+    def test_a_projects_path_is_absolute_or_starts_from_the_home_folder(self):
+        for relative in ("Projects/shop", "./shop", "../shop", "~shop-but-no-such-person/x"):
+            found = problems(ONE.replace('path = "~/Projects/shop"', 'path = "%s"' % relative))
+
+            self.assertEqual(found, [("projects.shop.path", "must be absolute, or start with ~/")], relative)
+        for absolute in ("/srv/shop", "~/Projects/shop", "~"):
+            parsed = config.parse(ONE.replace('path = "~/Projects/shop"', 'path = "%s"' % absolute))
+
+            self.assertEqual(parsed.projects[0].path, absolute)
+
     def test_no_permission_mode_is_assumed(self):
         found = problems(ONE.replace('permission_mode = "manual"\n', ""))
 

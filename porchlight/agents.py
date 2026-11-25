@@ -679,9 +679,13 @@ def uninstall(configuration, mac, out=print, servers=False, purge=False, config_
         out("Nothing was purged: a server that is left running still reads the configuration and the state.")
     elif used or waiting:
         running = used + waiting
+        # The service that ended a session the app archived is gone by now.
+        how = "Close its tab, or end it in its terminal" if running == 1 else (
+            "Close their tabs, or end them in their terminals"
+        )
         out(
-            "Nothing was purged: %s still %s. Archive it in the app, or close its tab, and run this again."
-            % (counted(running, "session", "sessions"), "runs" if running == 1 else "run")
+            "Nothing was purged: %s still %s. %s, and run this again."
+            % (counted(running, "session", "sessions"), "runs" if running == 1 else "run", how)
         )
         code = 1
     elif not erase(configuration, mac, out, config_file or mac.config_file, readable):

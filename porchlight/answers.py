@@ -27,6 +27,7 @@ PREREQUISITES, TERMINAL, MODE, FEATURES, KEEP_AWAKE, NAME, CONFIRM = (
     "name",
     "confirm",
 )
+NO_TERMINAL = "none"  # what setup answers for a Mac where no tab opens
 KEEP_AWAKE_TITLES = {"always": "On AC power and on battery", "plugged-in": "Only on AC power"}
 NAME_SHAPE = "a project's name has lowercase letters, digits and hyphens, at most 32"
 FIRST = "recommended"  # the preset the features start from when nothing was chosen
@@ -34,10 +35,11 @@ FIRST = "recommended"  # the preset the features start from when nothing was cho
 
 def setup_answers(configuration):
     """What setup starts from: the terminal and the defaults saved, else nothing chosen and
-    the recommended features."""
+    the recommended features. A Mac set up before without a terminal starts from none."""
     defaults = configuration.defaults
+    set_up = defaults != config.Defaults()
     return {
-        TERMINAL: configuration.terminal,
+        TERMINAL: configuration.terminal or (NO_TERMINAL if set_up else None),
         MODE: defaults.permission_mode,
         FEATURES: defaults.features or config.PRESETS[FIRST],
         KEEP_AWAKE: config.keep_awake(configuration),
@@ -56,7 +58,13 @@ def with_setup(configuration, answers):
     defaults = config.Defaults(answers[MODE], config.ordered(answers[FEATURES]))
     chosen = answers.get(KEEP_AWAKE) or config.keep_awake(configuration)
     awake = None if chosen == config.KEEP_AWAKE[0] else chosen
-    return dataclasses.replace(configuration, terminal=answers[TERMINAL], defaults=defaults, keep_awake=awake)
+    terminal = None if answers[TERMINAL] == NO_TERMINAL else answers[TERMINAL]
+    return dataclasses.replace(configuration, terminal=terminal, defaults=defaults, keep_awake=awake)
+
+
+def terminal_needed(configuration):
+    """Whether a linked project opens tabs, so that the configuration must name a terminal."""
+    return any("terminal" in config.tools(project.features) for project in configuration.projects)
 
 
 def init_answers(configuration, existing, suggested):

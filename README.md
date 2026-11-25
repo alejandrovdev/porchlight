@@ -95,7 +95,9 @@ With the `server` feature on, you can also create new sessions on this Mac from 
 
 1. **Prerequisites**: Claude Code, git, tmux and each supported terminal app, each marked
    `ok` or `missing` with what to do about it. Nothing is installed from here.
-2. **Terminal**: the app tabs open in (Warp), marked installed or not installed.
+2. **Terminal**: the app tabs open in (Warp), marked installed or not installed, or
+   `None`: no tab opens and sessions run hidden. `None` is offered only while no linked
+   project has `tabs`; a project linked later with `tabs` asks for a terminal.
 3. **Default permission mode**: one of the modes your installed `claude --help` lists. When
    they cannot be read, you type one.
 4. **Default features**: a checklist of the [features](#features-and-presets). Turning one
@@ -194,7 +196,8 @@ is 1: run `deinit` again.
 
 `setup` changes the terminal and the `[defaults]` that new projects start from; linked
 projects keep their own values. It takes the same flags as `init`, except `--name` and
-`--base`:
+`--base`; its `--terminal` also takes `none`, which leaves `terminal` out of the
+configuration:
 
 ```sh
 porchlight setup --terminal warp --permission-mode plan --preset recommended --yes
@@ -379,7 +382,7 @@ features = ["server", "resume-list"]
 
 | Key | Type | Rules |
 | --- | --- | --- |
-| `terminal` | text | The app tabs open in. Only `"warp"` today. Required when any project has `tabs`. |
+| `terminal` | text | The app tabs open in. Only `"warp"` today. Required when any project has `tabs`; left out when `setup` is answered `None`. |
 | `keep_awake` | text | Optional. When `keep-awake` holds the Mac awake: `"always"` (the default: on AC power and on battery) or `"plugged-in"` (on AC power only). One setting for the Mac. |
 | `[defaults]` | table | Optional. What `init` starts from for a new project. |
 | `[projects.<name>]` | table | One per project. |
@@ -402,7 +405,7 @@ at most 32 characters long.
 
 | Key | Type | Required | Rules |
 | --- | --- | --- | --- |
-| `path` | text | yes | The repository's top folder, absolute or starting with `~`. One project per folder. `init` writes the full path. |
+| `path` | text | yes | The repository's top folder, absolute or starting with `~/`; a relative path is refused, since the agents do not run from your folder. One project per folder. `init` writes the full path. |
 | `permission_mode` | text | yes | One word: the mode Claude Code starts each of the project's sessions in. `doctor` checks it against the modes `claude --help` lists. |
 | `preset` | text | one of the two | `minimal` or `recommended`. |
 | `features` | list of text | one of the two | At least one feature, including the features each one builds on. |
@@ -619,13 +622,19 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
 - Warp must be running: porchlight never starts it. The tab opens at the next pass once
   Warp runs.
 - After three failed attempts the session keeps running without a tab, driven from the app,
-  and `status` marks it `hidden`. The log says `no tab opened for ... (attempt N)`. You can
-  still see it in a terminal:
-  `tmux -L porchlight attach-session -t '=<project>-<short id>'`, with the short id that
-  `status` prints first.
+  and no tab is tried again for it. `status` marks it `hidden` and prints, below it, the
+  command that attaches to it in a terminal. The log says `no tab opened for ... (attempt N)`.
 - For the server's sessions, `status` says `tab open`, `no tab yet` or
   `tab closed by the user`. A view tab you closed is not opened again; open the view
   yourself with `porchlight view <project> <session>`.
+
+### A closed tab leaves the session listed in the app
+
+- Closing a session's tab ends the session on the Mac, but the app keeps it listed until you
+  archive it there: porchlight cannot archive a session from the Mac.
+- Unarchiving a session in the app reaches nothing on the Mac. To bring it back, ask a ready
+  session to reopen it by name (the `reopen` feature), or run `porchlight reopen <name>` on
+  the Mac.
 
 ### A session archived in the app keeps running
 

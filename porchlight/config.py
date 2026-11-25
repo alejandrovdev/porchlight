@@ -207,6 +207,9 @@ def project_from(name, table, problems):
         return None
     before = len(problems)
     path = text_value(key, table, "path", problems, required=True)
+    if path is not None and not os.path.isabs(os.path.expanduser(path)):
+        # The agents run from /, not from where the configuration was written.
+        problems.append((key + ".path", "must be absolute, or start with ~/"))
     mode = text_value(key, table, "permission_mode", problems, ONE_WORD, "must be one word", required=True)
     features = chosen_features(key, table, problems)
     base = text_value(key, table, "base", problems)

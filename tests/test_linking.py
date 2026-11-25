@@ -148,14 +148,51 @@ class Setup(Linking):
         self.run_cli("setup", keys=keys)
 
         terminals = keys.last("Terminal")
-        self.assertEqual([item.value for item in terminals.items], list(config.TERMINALS))
+        self.assertEqual([item.value for item in terminals.items], list(config.TERMINALS) + ["none"])
         self.assertEqual(terminals.items[0].note, "installed")
+        self.assertEqual(terminals.current, None, "a first setup starts on the first terminal, not on none")
 
         self.mac.apps["warp"].is_installed = False
         keys = standins.Keys(ENTER, "q")
         self.run_cli("setup", keys=keys)
 
         self.assertEqual(keys.last("Terminal").items[0].note, "not installed")
+
+    def test_choosing_no_terminal_saves_none_and_a_rerun_preselects_it(self):
+        keys = standins.Keys(ENTER, DOWN, ENTER, ENTER, ENTER, ENTER, "y")
+
+        self.assertEqual(self.run_cli("setup", keys=keys), 0)
+
+        self.assertIsNone(self.saved().terminal)
+        self.assertNotIn("terminal", self.file.read_text())
+        keys = standins.Keys(ENTER, ENTER, ENTER, ENTER, ENTER, "y")
+
+        self.assertEqual(self.run_cli("setup", keys=keys), 0)
+
+        self.assertEqual(keys.last("Terminal").current, "none")
+        self.assertIsNone(self.saved().terminal)
+
+    def test_no_terminal_is_not_offered_while_a_linked_project_opens_tabs(self):
+        self.configure(shop=("ready-session", "tabs"))
+        keys = standins.Keys(ENTER, "q")
+
+        self.run_cli("setup", keys=keys)
+
+        self.assertEqual([item.value for item in keys.last("Terminal").items], list(config.TERMINALS))
+
+    def test_the_terminal_flag_takes_none_unless_a_linked_project_opens_tabs(self):
+        flags = ["--terminal", "none", "--permission-mode", "plan", "--preset", "minimal", "--yes"]
+
+        self.assertEqual(self.run_cli("setup", *flags), 0)
+
+        self.assertEqual(self.saved(), config.Config(None, (), config.Defaults("plan", ("server",))))
+        self.configure(defaults=config.Defaults("plan", ("server",)), shop=("ready-session", "tabs"))
+        self.printed.clear()
+
+        self.assertEqual(self.run_cli("setup", *flags), 1)
+
+        self.assertEqual(self.printed, ['terminal: required by "tabs" of the project "shop"', "Nothing was changed."])
+        self.assertEqual(self.saved().terminal, "warp")
 
     def test_the_permission_modes_are_those_claude_lists_and_none_is_preselected(self):
         keys = standins.Keys(ENTER, ENTER, "q")
@@ -437,6 +474,7 @@ class Init(Linking):
             (["--name", "blog"], 'the project "blog" already has this name'),
             (["--permission-mode", "sometimes"], "claude lists"),
             (["--feature", "tabs"], '"tabs" needs "ready-session"'),
+            (["--terminal", "none"], "invalid choice"),  # only setup may leave the terminal out
         ):
             keys = standins.Keys()
 
