@@ -68,6 +68,16 @@ class LiveSessions(unittest.TestCase):
 
         self.assertEqual(view_tabs.views(ps), {LIVE})
 
+    def test_finds_a_view_whose_interpreter_takes_options_before_the_module(self):
+        # A copy that is not installed runs `python -P -m porchlight` (no folder's module first).
+        ps = (
+            f"201 /usr/bin/python3 -P -m porchlight view shop {LIVE}\n"
+            f"202 /usr/bin/python3 -P -I -m porchlight view blog {OTHER}\n"
+            f"203 /usr/bin/env -P -m porchlight view blog {OTHER}2\n"
+        )
+
+        self.assertEqual(view_tabs.views(ps), {LIVE, OTHER})
+
     def test_finds_a_view_the_installed_command_runs(self):
         ps = (
             f"201 /opt/homebrew/bin/porchlight view shop {LIVE}\n"

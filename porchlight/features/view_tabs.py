@@ -28,16 +28,17 @@ MAX_ATTEMPTS = 3
 
 def runs_the_tool(words, index):
     """Whether the word at `index` of a process's command is the tool being run: its
-    installed command, by its path, or its module after an interpreter's `-m`."""
+    installed command, by its path, or its module after an interpreter's `-m` (and the
+    interpreter's own options, such as `-P`)."""
     word = words[index]
     if "/" in word:
         return Path(word).name == names.TOOL
-    return (
-        word == names.TOOL
-        and index >= 2
-        and words[index - 1] == "-m"
-        and Path(words[index - 2]).name.lower().startswith("python")
-    )
+    if word != names.TOOL or index < 2 or words[index - 1] != "-m":
+        return False
+    before = index - 2
+    while before > 0 and words[before].startswith("-"):
+        before -= 1
+    return Path(words[before]).name.lower().startswith("python")
 
 
 def views(ps_text):

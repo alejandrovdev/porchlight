@@ -163,17 +163,17 @@ class Tmux(unittest.TestCase):
              "/bin/zsh -lic 'exec claude --remote-control'"],
         )  # fmt: skip
 
-    def test_a_folder_with_a_hash_reaches_tmux_literally(self):
-        # tmux reads -c as a format: #S, #{...} and #(...) would be replaced, and the session
-        # would start in another folder. ## is how a format says #.
-        for folder, given in (
-            ("/srv/shop/w#S", "/srv/shop/w##S"),
-            ("/srv/shop/w#(touch x)", "/srv/shop/w##(touch x)"),
-            ("/srv/#{session_name}/##", "/srv/##{session_name}/####"),
-        ):
+    def test_a_folder_with_a_hash_is_reached_by_the_shell_not_by_tmux(self):
+        # tmux reads -c as a format: #S, #{...} and #(...) would be replaced, and doubling the
+        # # does not survive #[. The shell goes there instead; tmux reads no format in it.
+        for folder in ("/srv/shop/w#S", "/srv/shop/w#(touch x)", "/srv/#{session_name}/##", "/r/k#[draft]", "/r/l#["):
             words = self.tmux().new_session("shop-aaaaaaaa", folder, "exec claude")
 
-            self.assertEqual(words[words.index("-c") + 1], given, folder)
+            self.assertNotIn("-c", words, folder)
+            self.assertEqual(
+                shlex.split(words[-1]), ["/bin/zsh", "-lic", "cd -- %s && exec claude" % shlex.quote(folder)], folder
+            )
+            self.assertEqual(shlex.split(shlex.split(words[-1])[2])[:3], ["cd", "--", folder], folder)
 
     def test_every_command_goes_to_its_own_server_with_a_clean_environment(self):
         runner = standins.Runner()

@@ -53,10 +53,17 @@ class Tmux:
         """What starts a session nobody sees: a command in a detached session, run by a
         login shell because a background service has next to no environment.
 
-        tmux reads the folder as a format, where #S, #{...} and #(...) stand for something
-        else: each # is doubled, which a format reads as one #."""
+        tmux reads the folder given with -c as a format, where #S, #{...} and #(...) stand for
+        something else, and no escape covers every case (#[ keeps a doubled #). A folder with a
+        # is reached by the shell instead, which tmux does not read as a format; one the shell
+        cannot enter runs nothing."""
+        directory = str(directory)
+        if "#" in directory:
+            start, command = [], "cd -- %s && %s" % (shlex.quote(directory), command)
+        else:
+            start = ["-c", directory]
         return self.words(
-            "-u", "new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", str(directory).replace("#", "##"),
+            "-u", "new-session", "-d", "-s", name, "-x", "200", "-y", "50", *start,
             "%s -lic %s" % (SHELL, shlex.quote(command)),
         )  # fmt: skip
 
