@@ -5,6 +5,11 @@ major version is 0, a minor release may change commands or the configuration fil
 
 ## [Unreleased]
 
+### Added
+
+- How to upgrade porchlight with Homebrew without stopping the sessions, in
+  [Setting up porchlight](docs/setup.md#upgrade).
+
 ### Changed
 
 - The README keeps the overview and the quick start. The reference moved to `docs/`:
