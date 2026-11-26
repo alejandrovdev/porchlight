@@ -21,5 +21,5 @@ Only the latest release gets security fixes. Upgrade with `brew upgrade porchlig
 ## What porchlight itself guards
 
 What porchlight writes, what it runs and how a session's permission mode reaches Claude
-Code are described in [Security and privacy](README.md#security-and-privacy). Choosing a
+Code are described in [Security and privacy](docs/security.md). Choosing a
 session's permission mode, and what Claude Code may do under it, is up to you.
