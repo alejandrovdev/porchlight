@@ -1,7 +1,7 @@
 # Setting up porchlight
 
 Part of [porchlight](../README.md): what `setup` and `init` ask, the flags that answer them
-beforehand, unlinking a folder, and removing porchlight.
+beforehand, unlinking a folder, upgrading, and removing porchlight.
 
 ## What `setup` asks
 
@@ -148,6 +148,32 @@ porchlight deinit ~/Projects/shop --yes
 
 If the server cannot be unloaded, the project stays in the configuration and the exit code
 is 1: run `deinit` again.
+
+## Upgrade
+
+```sh
+brew update
+HOMEBREW_NO_INSTALL_CLEANUP=1 brew upgrade alejandrovdev/porchlight/porchlight
+porchlight stop
+porchlight start
+porchlight doctor
+brew cleanup porchlight
+```
+
+1. `brew upgrade` installs the new version. Homebrew would remove the old one right away,
+   but the service keeps running the old one, and the files that come with it, until it
+   starts again: `HOMEBREW_NO_INSTALL_CLEANUP=1` keeps it until then.
+2. `stop` and `start` restart the service alone, on the new version. The sessions keep
+   running: the ready ones wait in tmux, and the ones in use keep their tabs.
+   `porchlight --version` says which version is installed.
+3. A running Remote Control server is left as it is, with its sessions: it runs Claude Code,
+   which the upgrade does not change, and takes up the new version the next time it starts.
+   To restart it now, `porchlight stop --servers` and then `porchlight start`; the sessions
+   it started end (see [Running and stopping](commands.md#running-and-stopping)).
+4. `brew cleanup porchlight` removes the old version once the service runs the new one.
+
+The [changelog](../CHANGELOG.md) says what each release brings and, for a major release, how
+to move.
 
 ## Uninstall
 

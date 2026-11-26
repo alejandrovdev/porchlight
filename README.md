@@ -53,7 +53,8 @@ porchlight --version
 ```
 
 The tap is `alejandrovdev/porchlight`. Installing adds the `porchlight` command; nothing
-runs in the background until you link a folder with `porchlight init`.
+runs in the background until you link a folder with `porchlight init`. To move to a new
+release, follow [Upgrade](docs/setup.md#upgrade): the service needs a restart.
 
 ## Quick start
 
@@ -128,7 +129,7 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
 
 | Page | What it covers |
 | --- | --- |
-| [Setting up porchlight](docs/setup.md) | What `setup` and `init` ask and the flags that answer them, unlinking a folder, and uninstalling. |
+| [Setting up porchlight](docs/setup.md) | What `setup` and `init` ask and the flags that answer them, unlinking a folder, upgrading, and uninstalling. |
 | [Features](docs/features.md) | What each feature does, in detail. |
 | [Configuration](docs/configuration.md) | The configuration file, its keys, what to run after you edit it, and the environment variables. |
 | [Commands](docs/commands.md) | Every command, its flags and exit codes, how to read `status`, and what starts and stops the background agents. |
