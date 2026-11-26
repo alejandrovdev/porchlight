@@ -5,6 +5,12 @@ major version is 0, a minor release may change commands or the configuration fil
 
 ## [Unreleased]
 
+### Changed
+
+- The README keeps the overview and the quick start. The reference moved to `docs/`:
+  setting up, features, configuration, commands, and security and privacy; the code's
+  layout and the rehearsal moved to the contributing guide.
+
 ## [1.0.0] - 2026-11-25
 
 The first stable release: from here on, what the README's

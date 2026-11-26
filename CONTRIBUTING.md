@@ -1,7 +1,7 @@
 # Contributing to porchlight
 
 Thank you for helping. porchlight is small on purpose: the Python standard library only, a
-macOS tool installed with Homebrew, and behavior a person can predict from the README.
+macOS tool installed with Homebrew, and behavior a person can predict from the README and `docs/`.
 
 ## Before you write code
 
@@ -26,11 +26,59 @@ and they run in a few seconds, apart from `tests/test_terminal.py`, which runs `
 pseudo-terminal it makes (its screens, keys, colors and resizes) and takes about ten.
 
 To try a change against the real Mac without touching an install you use, follow
-[A rehearsal apart from a real install](README.md#a-rehearsal-apart-from-a-real-install).
+[A rehearsal apart from a real install](#a-rehearsal-apart-from-a-real-install).
 
-The package is built in layers (see [Development](README.md#development)): an atom knows
-nothing of features, and a feature declares what it needs and does nothing when it is off.
-Keep a new piece in the lowest layer that can hold it.
+### How the code is laid out
+
+The package is built in layers. An atom knows nothing of features; a feature declares what
+it needs and does nothing when it is off; presets name sets of features; a project picks a
+preset or its own list. Keep a new piece in the lowest layer that can hold it.
+
+```mermaid
+flowchart BT
+    atoms["<b>Atoms</b><br/>one job each: processes, transcripts, git worktrees,<br/>tmux, terminal tabs, launchd, state files, logs"]
+    features["<b>Features</b><br/>what a project turns on or off"]
+    presets["<b>Presets</b><br/>named sets of features"]
+    projects["<b>Projects</b><br/>a repository with its preset or its own list"]
+
+    atoms --> features --> presets --> projects
+```
+
+| Where | What |
+| --- | --- |
+| `porchlight/atoms/` | the atoms: processes, transcripts, worktrees, tmux, terminal tabs, launchd, state files, logs, file watching |
+| `porchlight/features/` | `server`, `ready_sessions` (`ready-session`, `tabs`, `reopen`), `view_tabs` and `live_view` (`live-view`), `resume_list`, `keep_awake` |
+| `porchlight/config.py` | the feature table, the presets and the configuration file |
+| `porchlight/passes.py`, `service.py` | one pass over the projects, and the service that runs passes |
+| `porchlight/agents.py` | the login agents: `apply`, `start`, `stop`, `uninstall` |
+| `porchlight/linking.py`, `answers.py`, `screens.py`, `ui/` | `setup`, `init`, `deinit` and the terminal interface |
+| `porchlight/doctor.py`, `cli.py`, `names.py`, `mac.py` | the checks, the command line, every name the tool creates, and the Mac as the features see it |
+
+### A rehearsal apart from a real install
+
+The [environment variables](docs/configuration.md#environment-variables) move everything
+porchlight names, so a rehearsal never touches an installed copy's files, agents or tmux
+server:
+
+```sh
+scratch=$(mktemp -d)
+export PORCHLIGHT_CONFIG="$scratch/config.toml" PORCHLIGHT_STATE_DIR="$scratch/state" \
+  PORCHLIGHT_LOG_DIR="$scratch/logs" PORCHLIGHT_LAUNCH_AGENTS_DIR="$scratch/agents" \
+  PORCHLIGHT_LABEL=test.porchlight.rehearsal PORCHLIGHT_TMUX_SERVER=porchlight-rehearsal
+porchlight doctor
+```
+
+`porchlight` is the installed command; from a clone, `python3 -m porchlight` runs the code
+of that clone instead. Keep `PORCHLIGHT_TRANSCRIPTS_DIR` at its default, or porchlight
+cannot find Claude Code's transcripts. Run from inside a porchlight session, first
+`unset TMUX TMUX_PANE`, so that nothing reaches the tmux server of that session.
+
+Whatever these variables say is handed on to the agents, tabs and sessions porchlight
+starts, with folders and files made absolute. The rehearsal is still real where it acts:
+`init`, `apply` and `start` load agents into your launchd under the label you chose, its
+sessions use your Claude Code account and show in your app, and they need the repository
+you link to be trusted by Claude Code (run `claude` in it once). End it with `porchlight
+deinit <folder>` and `porchlight uninstall --servers --purge` under the same variables.
 
 ## How a change is made
 
