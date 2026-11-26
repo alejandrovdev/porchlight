@@ -142,5 +142,5 @@ An agent that is not loaded comes back with `porchlight start`; one that has no 
 ## A server uses an old permission mode
 
 A running server keeps the mode it started with. Restart it with `porchlight apply --servers`
-(its sessions end). See [Running and stopping](../README.md#running-and-stopping).
+(its sessions end). See [Running and stopping](commands.md#running-and-stopping).
 

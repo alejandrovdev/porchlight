@@ -89,7 +89,7 @@ The service reads the file on every pass, so a change to a project's features ta
 at its next pass. `apply` is what adds or removes the background agents: run it after you
 add or remove a project or its `server` feature. It also installs the session settings of
 projects that have no running server. A server that is running keeps the permission mode it
-started with until it starts again: see [Running and stopping](../README.md#running-and-stopping).
+started with until it starts again: see [Running and stopping](commands.md#running-and-stopping).
 
 ## Environment variables
 

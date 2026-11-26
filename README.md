@@ -12,8 +12,6 @@ Contents: [The problem it solves](#the-problem-it-solves) ·
 [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start) ·
 [Documentation](#documentation) ·
 [How it works](#how-it-works) · [Features and presets](#features-and-presets) ·
-[Commands](#commands) ·
-[Running and stopping](#running-and-stopping) · [Security and privacy](#security-and-privacy) ·
 [Troubleshooting](#troubleshooting) · [Development](#development) ·
 [Compatibility](#compatibility) · [Contributing](#contributing) · [License](#license)
 
@@ -107,14 +105,9 @@ runs in the background until you link a folder with `porchlight init`.
        No session the server started is running.
    ```
 
-   Each line is one session: its short id; its state (`free` waits for you, `used` is one
-   you wrote in, `closed` ended and `porchlight reopen` brings it back); when it last
-   changed; its name in the app; and where it runs: the process id and its Remote Control
-   session (`not in the app yet` until the app has it), plus `hidden` while it has no tab,
-   or `not running`. A free session always waits hidden; a session in use gets a tab, unless
-   its tab failed three times. When no tab will open for a running session (the project has
-   no `tabs`, or its tab was given up on), `status` prints below it the command that
-   attaches to it, for a free session too.
+   Each line is one session: its id, its state (`free`, `used` or `closed`), when it last
+   changed, its name in the app and where it runs.
+   [Reading `status`](docs/commands.md#reading-status) says what each part means.
 
 With the `server` feature on, you can also create new sessions on this Mac from the app.
 
@@ -125,7 +118,9 @@ With the `server` feature on, you can also create new sessions on this Mac from 
 | [Setting up porchlight](docs/setup.md) | What `setup` and `init` ask and the flags that answer them, unlinking a folder, and uninstalling. |
 | [Features](docs/features.md) | What each feature does, in detail. |
 | [Configuration](docs/configuration.md) | The configuration file, its keys, what to run after you edit it, and the environment variables. |
+| [Commands](docs/commands.md) | Every command, its flags and exit codes, how to read `status`, and what starts and stops the background agents. |
 | [How porchlight works](docs/how-it-works.md) | What runs on your Mac, the life of a session, and where its work goes. |
+| [Security and privacy](docs/security.md) | What porchlight runs and reads, what it adds to a session, the files it writes and its login agents. |
 | [Troubleshooting](docs/troubleshooting.md) | What `doctor`, `status` and the logs tell you, and the common problems with their fixes. |
 
 ## How it works
@@ -158,37 +153,6 @@ The presets are `minimal` (`server`) and `recommended` (all seven).
 
 [Features](docs/features.md) says what each one does in detail.
 
-## Commands
-
-Every command takes `--config <file>` (before or after its name) and `-h` or `--help`.
-`porchlight --version` prints the version.
-
-| Command | Flags | What it does |
-| --- | --- | --- |
-| `setup` | `--terminal warp\|apple-terminal\|none`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--keep-awake always\|plugged-in`, `--install-missing`, `--yes` | Set up this Mac once: the terminal and what new projects start from. |
-| `init [folder]` | `--terminal warp\|apple-terminal`, `--permission-mode <mode>`, `--preset <name>` or `--feature <feature>` (repeated), `--name <name>`, `--base <branch>`, `--yes` | Link a folder's repository as a project, or replace the settings of one already linked. |
-| `deinit [folder]` | `--yes` | Unlink a project's folder; sessions in use stay. |
-| `status` | | Print the sessions of every project. |
-| `reopen [name]` | `--project <name>` | Open a closed session again, back online in the app. Without a name, list the closed ones. |
-| `retry` | `--project <name>` | After a free session failed to start, clear the wait before the next try, for every project with `ready-session` or the one named. The service tries at its next pass, within 20 seconds. |
-| `doctor` | | Check this Mac (Claude Code signed in and recent enough, the login agents loaded) and what each project needs on it, and say what to do about what is missing. |
-| `view <project> <session>` | | Follow a session the server started (`cse_...`), read-only. What a `live-view` tab runs. |
-| `resume-list [sync]` | | List the `/resume` copies of the server's sessions, with the command that resumes each. `sync` brings them up to date first. |
-| `apply` | `--servers` | Make the background agents match the configuration. A server that runs is left as it is. |
-| `start` | | Load every installed agent that is not loaded. |
-| `stop` | `--servers` | Unload the service until `start` or the next login. Sessions already running keep running. |
-| `uninstall` | `--servers`, `--purge` | Remove the agents and end the free sessions. Sessions in use keep running. |
-| `run` | `--once` | The service itself, what its login agent runs. `--once` makes one pass and exits. |
-| `server <project>` | `--permission-mode <mode>` | A project's Remote Control server, what its login agent runs, in the project's permission mode. `--permission-mode` names the mode its agent was written for; when the project's differs, it says so in the server's log. |
-
-You do not need to type `run` or `server`: the login agents run them.
-
-| Exit code | Meaning |
-| --- | --- |
-| 0 | It did what was asked. |
-| 1 | It refused, or something needs attention: for example a check of `doctor` failed, a project's folder is missing in `status`, the configuration has problems, you quit a screen, or a running server was left in place by `uninstall`. |
-| 2 | The command line is wrong (including a screen no flag answered when there is no terminal to ask on), or `PORCHLIGHT_LABEL` is not a reverse domain name. |
-
 ## Compatibility
 
 From 1.0.0, porchlight follows [Semantic Versioning](https://semver.org): a minor or patch
@@ -207,109 +171,6 @@ changes them, with the changelog saying how to move:
 Not part of it: `porchlight run` and `porchlight server`, which the login agents call; the
 wording and layout of what the commands print and of the logs (read them, do not parse
 them); and the look of the setup screens.
-
-## Running and stopping
-
-> [!IMPORTANT]
-> **A running Remote Control server is never stopped or restarted unless you ask with
-> `--servers`.** The sessions a server started run inside it, with no terminal. When the
-> server ends they end too, and the Claude app cannot start them again. So `apply`, `stop`,
-> `uninstall`, `setup` and `init` leave a running server as it is and say so. `deinit` ends
-> only the server of the folder you unlink, and asks first when it has sessions.
-
-| Command | The service | Running servers | Sessions |
-| --- | --- | --- | --- |
-| `apply` | loaded; restarted when its definition changed; removed when no project is left | left as they are; a server that is not running is loaded | keep running |
-| `apply --servers` | the same | restarted when their definition changed; removed when the configuration no longer has them | those of a restarted or removed server end |
-| `stop` | unloaded | keep running | keep running |
-| `stop --servers` | unloaded | unloaded | those the servers started end |
-| `start` | loaded | loaded | nothing changes |
-
-- `stop` leaves the agents' files in place, so `start`, or your next login, loads them
-  again.
-- `apply` never loads a second server into a folder that a running server already serves.
-  After renaming a project, for example, it says that the old name's server still runs
-  there; `porchlight apply --servers` replaces it.
-- A server's definition is its command, with the project's permission mode, its folder and
-  its environment. After you change a project's permission mode, `apply` (and `init`) say
-  that the running server was left as it is, though its definition changed: **it keeps the
-  mode it started with** until it starts again, and every start takes the configuration's
-  mode. To restart it now with the new mode and bring its agent up to date (its sessions
-  end):
-
-  ```sh
-  porchlight apply --servers
-  ```
-
-  Ready sessions use the new mode from the next one prepared.
-
-## Security and privacy
-
-- **Every session is an ordinary `claude` process**, started as you, with your own Claude
-  Code configuration and account. Ready sessions run
-  `claude --session-id <id> --permission-mode <mode> --settings <file> --append-system-prompt <note> --remote-control-session-name-prefix <prefix> --remote-control`;
-  a server runs
-  `claude remote-control --spawn worktree --permission-mode <mode> --settings <file> --no-create-session-in-dir`.
-- **porchlight never reads Claude Code's credentials and never calls Claude's servers.** It
-  makes no network connection of its own. It reads the process list, git, its own files and
-  the transcripts Claude Code writes in `~/.claude/projects` for the projects you linked.
-  To say whether you are signed in, `doctor` asks `claude auth status` and keeps only its
-  yes or no: no account detail is printed or stored.
-- **It runs as the person who is logged in and refuses root.** `setup`, `init`, `deinit`,
-  `apply`, `start`, `stop`, `uninstall`, `run` and `server` answer `Run this as the person
-  who is logged in, without sudo: root has other agents. Nothing was changed.`
-- **The permission mode is chosen per project; none is assumed.** It decides what a session
-  may do on your Mac without asking first. When you drive sessions from the phone, nobody is
-  at the Mac to watch: a mode that lets a session act without asking (`bypassPermissions` is
-  the widest) lets it edit files and run commands as you, with your files, your keys and your
-  network, while you only see it on the phone. What the session reads (a file in the
-  repository, a web page, a command's output) can steer it too, and nobody at the Mac would
-  see it happen. Choose the narrowest mode the project needs. Remote Control connects these
-  sessions to your Claude account: whoever can use that account in the app can write in
-  them.
-- **Its tmux server lets a session reach your terminal and clipboard**, as Claude Code asks
-  of tmux: a program in a session can set the clipboard and send codes to the terminal it is
-  shown in (`set-clipboard` and `allow-passthrough` in its tmux configuration).
-- **What porchlight adds to a session**: the settings file it passes holds only the
-  permission mode (`{"permissions": {"defaultMode": "<mode>"}}`); every other setting is your
-  own. Each ready session gets one note beside its system prompt: that it runs on your Mac
-  and is driven from the app and, with `reopen`, the `porchlight reopen` command to run when
-  you ask for a closed session.
-
-### Files it writes
-
-The logs keep sessions' titles and first prompts, and the server's logs its Remote Control
-link; they are not rotated. They sit under `~/Library`, which only you can open; if a
-`PORCHLIGHT_*_DIR` variable moves them, choose a folder others cannot read.
-
-| Where | What |
-| --- | --- |
-| `~/Library/Application Support/porchlight/config.toml` | the configuration |
-| `~/Library/Application Support/porchlight/projects/<project>/` | each project's state: `ready-sessions.json`, `view-tabs.json`, `resume-list.json`, `server-worktrees.json`, their locks, and `settings.json` (with `settings.json.next` while a change waits to be installed) |
-| `~/Library/Application Support/porchlight/service.lock` | held by the running service |
-| `~/Library/Logs/porchlight/` | `<project>.log`, `agent.service.log`, `agent.server.<project>.log` |
-| `~/Library/LaunchAgents/` | the login agents' files (below) |
-| `<repository>/.claude/worktrees/porchlight-<project>-<id>` | the ready sessions' worktrees, on branches of the same name |
-| `~/.claude/projects/<repository's folder>/` | the `/resume` copies (`resume-list`) |
-| `~/.warp/tab_configs/` | a tab's configuration, removed once the tab has opened |
-
-The folders porchlight makes for its configuration, state and logs carry a `.porchlight` file; `--purge`
-deletes only inside folders that have it. The worktrees of the server's sessions
-(`.claude/worktrees/bridge-cse_...`) are made by Claude Code, not by porchlight; porchlight
-removes one once its session ended, only when nothing in it would be lost (see
-[How porchlight works](docs/how-it-works.md#the-life-of-a-session)), and deletes its branch
-only when every commit of it is already on the base branch.
-
-### Login agents
-
-| Label | Runs | When |
-| --- | --- | --- |
-| `io.github.alejandrovdev.porchlight` | `porchlight run` | while the configuration has at least one project |
-| `io.github.alejandrovdev.porchlight.server.<project>` | `porchlight server <project> --permission-mode <mode>`, in the project's folder | for each project with `server` |
-
-Both start at login and start again when they end (a server waits 30 seconds between two
-starts). Their files carry the `PATH` folders of the tools porchlight found and any
-`PORCHLIGHT_*` variable set when they were written.
 
 ## Troubleshooting
 
