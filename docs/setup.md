@@ -22,7 +22,7 @@ beforehand, unlinking a folder, and removing porchlight.
    no linked project has `tabs`; a project linked later with `tabs` asks for a terminal.
 3. **Default permission mode**: one of the modes your installed `claude --help` lists. When
    they cannot be read, you type one.
-4. **Default features**: a checklist of the [features](../README.md#features-and-presets). Turning one
+4. **Default features**: a checklist of the [features](features.md). Turning one
    on turns on what it needs; turning one off turns off what needs it, and says why.
 5. **Keep the Mac awake**: `On AC power and on battery` (the default) or `Only on AC
    power`. Asked only when the default features or a linked project have `keep-awake`.

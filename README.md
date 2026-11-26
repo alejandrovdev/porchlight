@@ -12,7 +12,7 @@ Contents: [The problem it solves](#the-problem-it-solves) ·
 [Requirements](#requirements) · [Install](#install) · [Quick start](#quick-start) ·
 [Documentation](#documentation) ·
 [How it works](#how-it-works) · [Features and presets](#features-and-presets) ·
-[Configuration](#configuration) · [Commands](#commands) ·
+[Commands](#commands) ·
 [Running and stopping](#running-and-stopping) · [Security and privacy](#security-and-privacy) ·
 [Troubleshooting](#troubleshooting) · [Development](#development) ·
 [Compatibility](#compatibility) · [Contributing](#contributing) · [License](#license)
@@ -123,6 +123,8 @@ With the `server` feature on, you can also create new sessions on this Mac from 
 | Page | What it covers |
 | --- | --- |
 | [Setting up porchlight](docs/setup.md) | What `setup` and `init` ask and the flags that answer them, unlinking a folder, and uninstalling. |
+| [Features](docs/features.md) | What each feature does, in detail. |
+| [Configuration](docs/configuration.md) | The configuration file, its keys, what to run after you edit it, and the environment variables. |
 | [How porchlight works](docs/how-it-works.md) | What runs on your Mac, the life of a session, and where its work goes. |
 | [Troubleshooting](docs/troubleshooting.md) | What `doctor`, `status` and the logs tell you, and the common problems with their fixes. |
 
@@ -154,135 +156,7 @@ and what happens to each worktree are in [How porchlight works](docs/how-it-work
 
 The presets are `minimal` (`server`) and `recommended` (all seven).
 
-- **`server`**: the app creates sessions in the repository through Claude Code's Remote
-  Control server, each in its own worktree, `.claude/worktrees/bridge-cse_<id>`. Once a
-  session ended, porchlight removes its worktree if it is clean, its HEAD is on the base
-  branch and no file `.worktreeinclude` lists was changed in it, and leaves it otherwise, saying why in the project's log; a worktree locked by
-  anything but an ended Claude Code process is left locked (see
-  [How porchlight works](docs/how-it-works.md#the-life-of-a-session)). The worktree's
-  branch is deleted with `git branch -d` only when every commit of it is on the base
-  branch.
-- **`ready-session`**: the session waits hidden in porchlight's own tmux server
-  (`tmux -L porchlight`), apart from any tmux you run. Its name in the app starts with the
-  project's session prefix, which is the project's name unless you set `session_prefix`.
-  Turning the feature off ends the session that waits; sessions in use are followed until
-  they end.
-- **`tabs`**: tabs open in the terminal you chose, and only while it is running:
-  porchlight never starts it. In Warp each session gets a tab; in Terminal, a window.
-  A tab's title is the session prefix and the session's title or first prompt; a Terminal
-  window shows instead the title the shell or the program sets (oh-my-zsh, Claude Code,
-  tmux), as Terminal does for any window. Without
-  `tabs`, a session in use keeps running hidden, and `porchlight status` prints the command
-  that shows it in a terminal.
-- **`live-view`**: the tab runs `porchlight view <project> <session>`. Nothing typed there
-  reaches the session; it closes by itself when the session is archived. A view tab you
-  close is not opened again.
-- **`reopen`**: each ready session is told, beside its system prompt, how to run
-  `porchlight reopen`. Write "reopen" and the session's name in a ready session and it
-  reopens that one, in a new tab, back online in the app. On the Mac,
-  `porchlight reopen` lists the closed sessions and `porchlight reopen <name>` reopens one
-  (by its title, its first prompt, part of either, or its id). The session runs that
-  command itself, so its permission mode may ask you first. A closed session is remembered
-  for 30 days. In a project without `tabs`, it comes back hidden in tmux.
-- **`resume-list`**: Claude Code's `/resume` leaves out the sessions that did not start in a
-  terminal, the server's among them. porchlight keeps a copy of each in the session folder
-  of the repository's top folder, where `/resume` lists it. A copy is a separate session:
-  continuing it in the terminal does not reach the phone. A copy you continued is never
-  overwritten; what the phone adds afterwards goes to a new one.
-- **`keep-awake`**: while the service runs and any project has this feature, the Mac does
-  not go to sleep while idle, on AC power or on battery (`caffeinate -i -s`). The display
-  still sleeps. On battery, closing the lid still puts the Mac to sleep: macOS decides
-  that, so keep the lid open or the Mac plugged in. On battery it drains the battery
-  faster. To keep it awake on AC power only (`caffeinate -s`), choose `Only on AC power`
-  in `setup`, or set `keep_awake = "plugged-in"`; the service picks up the change by itself.
-
-## Configuration
-
-One file, written by `setup` and `init` and editable by hand:
-
-```text
-~/Library/Application Support/porchlight/config.toml
-```
-
-Every command takes `--config <file>` to use another one, and the `PORCHLIGHT_CONFIG`
-variable moves the default. A full example:
-
-```toml
-terminal = "warp"
-
-[defaults]
-permission_mode = "plan"
-preset = "recommended"
-
-[projects.shop]
-path = "~/Projects/shop"
-permission_mode = "manual"
-preset = "recommended"
-base = "main"
-session_prefix = "Shop"
-
-[projects.blog]
-path = "~/Projects/blog"
-permission_mode = "plan"
-features = ["server", "resume-list"]
-```
-
-### Top level
-
-| Key | Type | Rules |
-| --- | --- | --- |
-| `terminal` | text | The app tabs open in: `"warp"` or `"apple-terminal"` (Terminal). Required when any project has `tabs`; left out when `setup` is answered `None`. |
-| `keep_awake` | text | Optional. When `keep-awake` holds the Mac awake: `"always"` (the default: on AC power and on battery) or `"plugged-in"` (on AC power only). One setting for the Mac. |
-| `[defaults]` | table | Optional. What `init` starts from for a new project. |
-| `[projects.<name>]` | table | One per project. |
-
-### `[defaults]`
-
-Each key is optional. Projects do not inherit these values: they only fill in the screens
-of `init` for a folder linked from then on.
-
-| Key | Type | Rules |
-| --- | --- | --- |
-| `permission_mode` | text | One word. |
-| `preset` | text | `minimal` or `recommended`. Not together with `features`. |
-| `features` | list of text | Feature names, including the features each one builds on. Not together with `preset`. |
-
-### `[projects.<name>]`
-
-The name has lowercase letters, digits and hyphens, starts with a letter or a digit, and is
-at most 32 characters long.
-
-| Key | Type | Required | Rules |
-| --- | --- | --- | --- |
-| `path` | text | yes | The repository's top folder, absolute or starting with `~/`; a relative path is refused, since the agents do not run from your folder. One project per folder. `init` writes the full path. |
-| `permission_mode` | text | yes | One word: the mode Claude Code starts each of the project's sessions in. `doctor` checks it against the modes `claude --help` lists. |
-| `preset` | text | one of the two | `minimal` or `recommended`. |
-| `features` | list of text | one of the two | At least one feature, including the features each one builds on. |
-| `base` | text | no | The branch new worktrees start from; it cannot start with `-`. Default: see [How it works](docs/how-it-works.md#the-life-of-a-session). |
-| `session_prefix` | text | no | How ready sessions' names start in the app, and the start of tab titles. Letters, digits and hyphens, at most 32. Default: the project's name. No two projects share one. |
-
-Unknown keys are errors. Every command that reads the file reports each problem by its key
-and exits with 1:
-
-```text
-The configuration ~/Library/Application Support/porchlight/config.toml has problems:
-projects.notes.features: "resume-list" needs "server"
-projects.notes.colour: unknown key
-terminal: required by "tabs" of the project "shop"
-```
-
-### After you edit the file
-
-```sh
-porchlight apply
-porchlight doctor
-```
-
-The service reads the file on every pass, so a change to a project's features takes effect
-at its next pass. `apply` is what adds or removes the background agents: run it after you
-add or remove a project or its `server` feature. It also installs the session settings of
-projects that have no running server. A server that is running keeps the permission mode it
-started with until it starts again: see [Running and stopping](#running-and-stopping).
+[Features](docs/features.md) says what each one does in detail.
 
 ## Commands
 
@@ -327,7 +201,8 @@ changes them, with the changelog saying how to move:
 - the configuration file: where it is, its keys and what they mean (a minor release may add
   an optional key);
 - the files and folders porchlight writes, and the labels of its login agents;
-- the `PORCHLIGHT_*` environment variables this README names.
+- the `PORCHLIGHT_*` environment variables that
+  [Configuration](docs/configuration.md#environment-variables) lists.
 
 Not part of it: `porchlight run` and `porchlight server`, which the login agents call; the
 wording and layout of what the commands print and of the logs (read them, do not parse
@@ -494,20 +369,9 @@ flowchart BT
 
 ### A rehearsal apart from a real install
 
-These variables move everything porchlight names, so a rehearsal never touches an installed
-copy's files, agents or tmux server:
-
-| Variable | Default |
-| --- | --- |
-| `PORCHLIGHT_CONFIG` | `~/Library/Application Support/porchlight/config.toml` |
-| `PORCHLIGHT_STATE_DIR` | `~/Library/Application Support/porchlight` |
-| `PORCHLIGHT_LOG_DIR` | `~/Library/Logs/porchlight` |
-| `PORCHLIGHT_LAUNCH_AGENTS_DIR` | `~/Library/LaunchAgents` |
-| `PORCHLIGHT_LABEL` | `io.github.alejandrovdev.porchlight`, the start of every label; a reverse domain name |
-| `PORCHLIGHT_TMUX_SERVER` | `porchlight`, the tmux socket name |
-| `PORCHLIGHT_TRANSCRIPTS_DIR` | `~/.claude/projects`, where transcripts are read |
-| `PORCHLIGHT_WARP_TAB_CONFIGS` | `~/.warp/tab_configs`, where a tab's configuration is written |
-| `PORCHLIGHT_CLAUDE`, `PORCHLIGHT_GIT`, `PORCHLIGHT_TMUX` | the program found in `PATH` or Homebrew's folders |
+The [environment variables](docs/configuration.md#environment-variables) move everything
+porchlight names, so a rehearsal never touches an installed copy's files, agents or tmux
+server:
 
 ```sh
 scratch=$(mktemp -d)
